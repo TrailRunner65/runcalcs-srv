@@ -42,6 +42,22 @@ sam local invoke MarathonRaceCrawlerFunction --event events/event.json
 sam local start-lambda
 ```
 
+## Run on AWS
+```bash
+# build and deploy to AWS (first deployment can use --guided)
+sam build
+sam deploy --stack-name marathon-race-crawler --capabilities CAPABILITY_IAM
+
+# invoke the deployed Lambda in AWS
+aws lambda invoke \
+  --function-name marathon-race-crawler \
+  --payload '{}' \
+  response.json
+
+# tail Lambda logs in CloudWatch
+sam logs -n MarathonRaceCrawlerFunction --stack-name marathon-race-crawler --tail
+```
+
 ## Lambda environment variables
 - `RACES_BUCKET` (required)
 - `RACES_KEY` (default: `races/marathons.json`)
