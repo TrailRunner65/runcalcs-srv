@@ -19,9 +19,10 @@ DEFAULT_BUCKET_NAME = "runcalcs"
 
 DEFAULT_SEED_URLS = [
     "https://aims-worldrunning.org/calendar/",
-    "https://www.ahotu.com/calendar/running/marathon",
     "https://www.runningintheusa.com/classic/list/marathon/upcoming",
-    "https://marathons.ahotu.com/calendar/marathon",
+    "https://worldsmarathons.com/",
+    "https://aims-worldrunning.org/calendar.html",
+    "https://worldathletics.org/competitions/world-athletics-label-road-races/calendar-results",
     "https://www.worldmarathonmajors.com/races",
     "https://www.baa.org/",
     "https://www.nyrr.org/tcsnycmarathon",
@@ -539,6 +540,8 @@ def _should_visit_link(base_domain: str, href: str) -> bool:
     if parsed.netloc and parsed.netloc != base_domain:
         return False
     lower = href.lower()
+    if "ahotu.com" in lower:
+        return False
     return any(token in lower for token in ("marathon", "race", "calendar"))
 
 
@@ -565,6 +568,8 @@ def crawl_sources(seed_urls: List[str], max_pages: int = 80, timeout_seconds: in
         if url in visited:
             continue
         visited.add(url)
+        if "ahotu.com" in urlparse(url).netloc.lower():
+            continue
 
         html = _fetch_url(url, timeout_seconds)
         if not html:
@@ -573,7 +578,7 @@ def crawl_sources(seed_urls: List[str], max_pages: int = 80, timeout_seconds: in
         page_races = _parse_jsonld(html, url)
         if not page_races:
             page_races = _parse_fallback_races(html, url)
-        races.extend(page_races)
+        races.extend([race for race in page_races if race.source != "Ahotu"])
 
         domain = urlparse(url).netloc
         for link in _extract_links(html, url):
