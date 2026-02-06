@@ -3,7 +3,7 @@
 AWS SAM project that deploys a daily Lambda to discover upcoming marathon races, deduplicate them, and persist the merged dataset to S3.
 
 ## What it does
-- Uses the S3 bucket name `runcalcs` by default (no bucket name is required in the Lambda event).
+- Uses the S3 bucket name `runcalcs` by default (no bucket name is required in the Lambda event). Ensure the bucket exists before deployment.
 - Runs once per day at midnight UTC via EventBridge schedule (`cron(0 0 * * ? *)`).
 - Crawls a set of seed marathon race calendar pages.
 - Extracts race metadata from `application/ld+json` Event markup.

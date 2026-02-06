@@ -3,11 +3,6 @@ Transform: AWS::Serverless-2016-10-31
 Description: Daily marathon race crawler lambda
 
 Resources:
-  MarathonRacesBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: runcalcs
-
   MarathonRaceCrawlerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -19,7 +14,7 @@ Resources:
       MemorySize: 512
       Policies:
         - S3CrudPolicy:
-            BucketName: !Ref MarathonRacesBucket
+            BucketName: runcalcs
       Environment:
         Variables:
           RACES_KEY: races/marathons.json
@@ -32,7 +27,5 @@ Resources:
             Enabled: true
 
 Outputs:
-  MarathonRacesBucketName:
-    Value: !Ref MarathonRacesBucket
   MarathonCrawlerFunctionName:
     Value: !Ref MarathonRaceCrawlerFunction
