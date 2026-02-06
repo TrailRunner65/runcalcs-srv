@@ -102,7 +102,47 @@ def _normalize_date(raw: Any) -> Optional[str]:
         return datetime.fromisoformat(value).date().isoformat()
     except ValueError:
         match = re.match(r"^(\d{4}-\d{2}-\d{2})", value)
-        return match.group(1) if match else None
+        if match:
+            return match.group(1)
+        for fmt in ("%B %d, %Y", "%b %d, %Y"):
+            try:
+                return datetime.strptime(value, fmt).date().isoformat()
+            except ValueError:
+                continue
+        return None
+
+
+def _parse_fallback_races(html: str, page_url: str) -> List[Race]:
+    races: List[Race] = []
+    patterns = [
+        re.compile(r"(?P<date>\d{4}-\d{2}-\d{2}).{0,120}(?P<name>[^<]{0,120}?marathon[^<]{0,120})", re.IGNORECASE),
+        re.compile(
+            r"(?P<date>(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}).{0,120}(?P<name>[^<]{0,120}?marathon[^<]{0,120})",
+            re.IGNORECASE,
+        ),
+    ]
+
+    for pattern in patterns:
+        for match in pattern.finditer(html):
+            raw_date = match.group("date")
+            name = re.sub(r"\s+", " ", match.group("name")).strip()
+            if not name:
+                continue
+            normalized_date = _normalize_date(raw_date)
+            if not normalized_date:
+                continue
+            races.append(
+                Race(
+                    name=name,
+                    date=normalized_date,
+                    location="Unknown",
+                    description="",
+                    entry_requirements="Not specified",
+                    source_url=page_url,
+                )
+            )
+
+    return races
 
 
 def _extract_jsonld_blobs(html: str) -> List[str]:
@@ -184,8 +224,8 @@ def _fetch_url(url: str, timeout_seconds: int) -> Optional[str]:
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
             content_type = response.headers.get("Content-Type", "")
-            if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
-                return None
+            if content_type and "text/html" not in content_type and "application/xhtml+xml" not in content_type:
+                logger.info("Skipping non-HTML content from %s (%s)", url, content_type)
             return response.read().decode("utf-8", errors="ignore")
     except (HTTPError, URLError, TimeoutError) as exc:
         logger.warning("Failed fetching %s: %s", url, exc)
@@ -207,7 +247,10 @@ def crawl_sources(seed_urls: List[str], max_pages: int = 80, timeout_seconds: in
         if not html:
             continue
 
-        races.extend(_parse_jsonld(html, url))
+        page_races = _parse_jsonld(html, url)
+        if not page_races:
+            page_races = _parse_fallback_races(html, url)
+        races.extend(page_races)
 
         domain = urlparse(url).netloc
         for link in _extract_links(html, url):

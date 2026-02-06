@@ -1,6 +1,6 @@
 from datetime import date
 
-from lambda_function import Race, _dedupe_and_filter, _extract_entry_requirements, _parse_jsonld
+from lambda_function import Race, _dedupe_and_filter, _extract_entry_requirements, _parse_jsonld, _parse_fallback_races
 
 
 def test_parse_jsonld_extracts_marathon_event():
@@ -75,6 +75,19 @@ def test_extract_entry_requirements():
 
     assert "qualification standard" in requirements
     assert "entry fee" in requirements
+
+
+def test_parse_fallback_races_extracts_marathon_and_date():
+    html = """
+    <div>2029-05-22 Spring City Marathon</div>
+    <div>Jun 3, 2031 - Lakeside Marathon Weekend</div>
+    """
+    races = _parse_fallback_races(html, "https://example.com")
+
+    assert len(races) == 2
+    assert races[0].date == "2029-05-22"
+    assert "marathon" in races[0].name.lower()
+    assert races[1].date == "2031-06-03"
 
 
 def test_lambda_handler_defaults_bucket_name(monkeypatch):
