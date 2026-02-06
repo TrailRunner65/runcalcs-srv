@@ -158,10 +158,11 @@ def _normalize_date(raw: Any) -> Optional[str]:
 
 def _parse_fallback_races(html: str, page_url: str) -> List[Race]:
     races: List[Race] = []
+    cleaned_html = _strip_script_style(html)
     patterns = [
-        re.compile(r"(?P<date>\d{4}-\d{2}-\d{2}).{0,120}(?P<name>[^<]{0,120}?marathon[^<]{0,120})", re.IGNORECASE),
+        re.compile(r"(?P<date>\d{4}-\d{2}-\d{2})\s+(?P<name>[^<]{0,120}marathon[^<]{0,120})", re.IGNORECASE),
         re.compile(
-            r"(?P<date>(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}).{0,120}(?P<name>[^<]{0,120}?marathon[^<]{0,120})",
+            r"(?P<date>(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4})\s+(?P<name>[^<]{0,120}marathon[^<]{0,120})",
             re.IGNORECASE,
         ),
     ]
@@ -170,10 +171,12 @@ def _parse_fallback_races(html: str, page_url: str) -> List[Race]:
     source = _source_from_url(page_url)
 
     for pattern in patterns:
-        for match in pattern.finditer(html):
+        for match in pattern.finditer(cleaned_html):
+            if "half marathon" in match.group(0).lower():
+                continue
             raw_date = match.group("date")
-            name = re.sub(r"\s+", " ", match.group("name")).strip()
-            if not name:
+            name = _clean_race_name(match.group("name"))
+            if not name or not _is_full_marathon_name(name):
                 continue
             normalized_date = _normalize_date(raw_date)
             if not normalized_date:
@@ -231,8 +234,8 @@ def _parse_jsonld(doc: str, page_url: str) -> List[Race]:
         for item in _walk_jsonld(data):
             if not isinstance(item, dict) or not _is_event(item):
                 continue
-            name = str(item.get("name") or "").strip()
-            if not name or "marathon" not in name.lower():
+            name = _clean_race_name(str(item.get("name") or ""))
+            if not name or not _is_full_marathon_name(name):
                 continue
             start_date = _normalize_date(item.get("startDate"))
             end_date = _normalize_date(item.get("endDate"))
@@ -390,6 +393,27 @@ def _normalize_status(raw: Any) -> str:
         if "scheduled" in lowered:
             return "scheduled"
     return "unknown"
+
+
+def _strip_script_style(html: str) -> str:
+    cleaned = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.IGNORECASE | re.DOTALL)
+    cleaned = re.sub(r"<style[^>]*>.*?</style>", " ", cleaned, flags=re.IGNORECASE | re.DOTALL)
+    return cleaned
+
+
+def _clean_race_name(raw: str) -> str:
+    cleaned = unescape(raw)
+    cleaned = re.sub(r"[\n\r\t]+", " ", cleaned)
+    cleaned = re.sub(r"\\u[0-9a-fA-F]{4}", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip(" \"'") if cleaned else ""
+
+
+def _is_full_marathon_name(name: str) -> bool:
+    lowered = name.lower()
+    if "marathon" not in lowered:
+        return False
+    return "half marathon" not in lowered and "half-marathon" not in lowered
 
 
 def _should_visit_link(base_domain: str, href: str) -> bool:

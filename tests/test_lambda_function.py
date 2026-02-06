@@ -130,6 +130,17 @@ def test_parse_fallback_races_extracts_marathon_and_date():
     assert races[1].date_start == "2031-06-03"
 
 
+def test_parse_fallback_races_skips_half_marathon():
+    html = """
+    <div>2030-06-10 Spring Half Marathon</div>
+    <div>2030-06-11 Spring Marathon</div>
+    """
+    races = _parse_fallback_races(html, "https://example.com")
+
+    assert len(races) == 1
+    assert races[0].name == "Spring Marathon"
+
+
 def test_lambda_handler_defaults_bucket_name(monkeypatch):
     import sys
     import types
