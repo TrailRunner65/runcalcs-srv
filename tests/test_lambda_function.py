@@ -141,6 +141,15 @@ def test_parse_fallback_races_skips_half_marathon():
     assert races[0].name == "Spring Marathon"
 
 
+def test_clean_race_name_strips_json_fragments():
+    html = """
+    <div>2026-02-06 marathon\\\",\\\"location\\\":\\\"Cairo, Egypt\\\",\\\"photos\\\":[</div>
+    """
+    races = _parse_fallback_races(html, "https://example.com")
+
+    assert races == []
+
+
 def test_lambda_handler_defaults_bucket_name(monkeypatch):
     import sys
     import types

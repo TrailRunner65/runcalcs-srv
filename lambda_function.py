@@ -178,6 +178,8 @@ def _parse_fallback_races(html: str, page_url: str) -> List[Race]:
             name = _clean_race_name(match.group("name"))
             if not name or not _is_full_marathon_name(name):
                 continue
+            if _looks_like_json_fragment(name):
+                continue
             normalized_date = _normalize_date(raw_date)
             if not normalized_date:
                 continue
@@ -405,15 +407,32 @@ def _clean_race_name(raw: str) -> str:
     cleaned = unescape(raw)
     cleaned = re.sub(r"[\n\r\t]+", " ", cleaned)
     cleaned = re.sub(r"\\u[0-9a-fA-F]{4}", " ", cleaned)
+    if any(token in cleaned for token in ("{", "}", "\":", "\\\"")):
+        cleaned = cleaned.split("{", 1)[0]
+    if any(token in cleaned for token in ("\\\",", "\",")):
+        cleaned = cleaned.split("\\\",", 1)[0]
+    cleaned = cleaned.replace("\\", " ")
     cleaned = re.sub(r"\s+", " ", cleaned)
-    return cleaned.strip(" \"'") if cleaned else ""
+    cleaned = cleaned.strip(" \"'")
+    if len(cleaned) > 120:
+        cleaned = cleaned[:120].strip()
+    return cleaned
 
 
 def _is_full_marathon_name(name: str) -> bool:
     lowered = name.lower()
     if "marathon" not in lowered:
         return False
+    if lowered.strip() == "marathon":
+        return False
     return "half marathon" not in lowered and "half-marathon" not in lowered
+
+
+def _looks_like_json_fragment(value: str) -> bool:
+    if not value:
+        return False
+    lowered = value.lower()
+    return any(token in lowered for token in ("\\\"", "\":", "{", "}", "hasstrava", "haswm", "photos", "location\":"))
 
 
 def _should_visit_link(base_domain: str, href: str) -> bool:
