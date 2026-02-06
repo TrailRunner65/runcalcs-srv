@@ -159,6 +159,7 @@ def _normalize_date(raw: Any) -> Optional[str]:
 def _parse_fallback_races(html: str, page_url: str) -> List[Race]:
     races: List[Race] = []
     cleaned_html = _strip_script_style(html)
+    text_only = _strip_tags(cleaned_html)
     patterns = [
         re.compile(r"(?P<date>\d{4}-\d{2}-\d{2})\s+(?P<name>[^<]{0,120}marathon[^<]{0,120})", re.IGNORECASE),
         re.compile(
@@ -171,39 +172,44 @@ def _parse_fallback_races(html: str, page_url: str) -> List[Race]:
     source = _source_from_url(page_url)
 
     for pattern in patterns:
-        for match in pattern.finditer(cleaned_html):
-            if "half marathon" in match.group(0).lower():
+        for line in text_only.splitlines():
+            if not line.strip():
                 continue
-            raw_date = match.group("date")
-            name = _clean_race_name(match.group("name"))
-            if not name or not _is_full_marathon_name(name):
-                continue
-            if _looks_like_json_fragment(name):
-                continue
-            normalized_date = _normalize_date(raw_date)
-            if not normalized_date:
-                continue
-            races.append(
-                Race(
-                    name=name,
-                    date_start=normalized_date,
-                    date_end=None,
-                    city=None,
-                    region=None,
-                    country=None,
-                    lat=None,
-                    lng=None,
-                    distance_km=42.195,
-                    website_url=page_url,
-                    source=source,
-                    source_event_id=None,
-                    description="",
-                    entry_requirements="Not specified",
-                    last_seen_at=now,
-                    last_verified_at=None,
-                    status="unknown",
+            for match in pattern.finditer(line):
+                if "half marathon" in match.group(0).lower():
+                    continue
+                raw_date = match.group("date")
+                name = _clean_race_name(match.group("name"))
+                if not name or not _is_full_marathon_name(name):
+                    continue
+                if _looks_like_json_fragment(name):
+                    continue
+                if not _is_reasonable_name(name):
+                    continue
+                normalized_date = _normalize_date(raw_date)
+                if not normalized_date:
+                    continue
+                races.append(
+                    Race(
+                        name=name,
+                        date_start=normalized_date,
+                        date_end=None,
+                        city=None,
+                        region=None,
+                        country=None,
+                        lat=None,
+                        lng=None,
+                        distance_km=42.195,
+                        website_url=page_url,
+                        source=source,
+                        source_event_id=None,
+                        description="",
+                        entry_requirements="Not specified",
+                        last_seen_at=now,
+                        last_verified_at=None,
+                        status="unknown",
+                    )
                 )
-            )
 
     return races
 
@@ -403,6 +409,10 @@ def _strip_script_style(html: str) -> str:
     return cleaned
 
 
+def _strip_tags(html: str) -> str:
+    return re.sub(r"<[^>]+>", " ", html)
+
+
 def _clean_race_name(raw: str) -> str:
     cleaned = unescape(raw)
     cleaned = re.sub(r"[\n\r\t]+", " ", cleaned)
@@ -433,6 +443,15 @@ def _looks_like_json_fragment(value: str) -> bool:
         return False
     lowered = value.lower()
     return any(token in lowered for token in ("\\\"", "\":", "{", "}", "hasstrava", "haswm", "photos", "location\":"))
+
+
+def _is_reasonable_name(name: str) -> bool:
+    if not name:
+        return False
+    if any(char in name for char in ('{', '}', ':', '"', '\\')):
+        return False
+    letters = sum(ch.isalpha() for ch in name)
+    return letters >= 5
 
 
 def _should_visit_link(base_domain: str, href: str) -> bool:

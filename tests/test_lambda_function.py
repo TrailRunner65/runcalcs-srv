@@ -150,6 +150,15 @@ def test_clean_race_name_strips_json_fragments():
     assert races == []
 
 
+def test_parse_fallback_races_ignores_jsonish_names():
+    html = """
+    <div>2026-02-06 marathon","hasStravaItinerary":false</div>
+    """
+    races = _parse_fallback_races(html, "https://example.com")
+
+    assert races == []
+
+
 def test_lambda_handler_defaults_bucket_name(monkeypatch):
     import sys
     import types
