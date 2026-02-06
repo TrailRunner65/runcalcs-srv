@@ -141,6 +141,25 @@ def test_parse_fallback_races_skips_half_marathon():
     assert races[0].name == "Spring Marathon"
 
 
+def test_location_extraction_from_garbage():
+    from lambda_function import _extract_location_from_name_garbage
+    
+    # Case 1: Simple
+    c1, n1 = _extract_location_from_name_garbage('marathon","location":"Cairo, Egypt"')
+    assert c1 == "Cairo"
+    assert n1 == "Egypt"
+    
+    # Case 2: Escaped
+    c2, n2 = _extract_location_from_name_garbage(r'marathon\",\"location\":\"Paris, France\"')
+    assert c2 == "Paris"
+    assert n2 == "France"
+    
+    # Case 3: No location
+    c3, n3 = _extract_location_from_name_garbage('marathon","other":"value"')
+    assert c3 is None
+    assert n3 is None
+
+
 def test_clean_race_name_strips_json_fragments():
     html = """
     <div>2026-02-06 marathon\\\",\\\"location\\\":\\\"Cairo, Egypt\\\",\\\"photos\\\":[</div>

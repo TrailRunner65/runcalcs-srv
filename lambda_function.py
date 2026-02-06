@@ -189,14 +189,17 @@ def _parse_fallback_races(html: str, page_url: str) -> List[Race]:
                 normalized_date = _normalize_date(raw_date)
                 if not normalized_date:
                     continue
+
+                garbage_city, garbage_country = _extract_location_from_name_garbage(match.group("name"))
+
                 races.append(
                     Race(
                         name=name,
                         date_start=normalized_date,
                         date_end=None,
-                        city=None,
+                        city=garbage_city,
                         region=None,
-                        country=None,
+                        country=garbage_country,
                         lat=None,
                         lng=None,
                         distance_km=42.195,
@@ -417,16 +420,40 @@ def _clean_race_name(raw: str) -> str:
     cleaned = unescape(raw)
     cleaned = re.sub(r"[\n\r\t]+", " ", cleaned)
     cleaned = re.sub(r"\\u[0-9a-fA-F]{4}", " ", cleaned)
-    if any(token in cleaned for token in ("{", "}", "\":", "\\\"")):
-        cleaned = cleaned.split("{", 1)[0]
-    if any(token in cleaned for token in ("\\\",", "\",")):
-        cleaned = cleaned.split("\\\",", 1)[0]
+    for token in ("{", "}", "\":", "\\\""):
+        if token in cleaned:
+            cleaned = cleaned.split(token, 1)[0]
+    
+    for token in ("\\\",", "\","):
+        if token in cleaned:
+            cleaned = cleaned.split(token, 1)[0]
     cleaned = cleaned.replace("\\", " ")
     cleaned = re.sub(r"\s+", " ", cleaned)
     cleaned = cleaned.strip(" \"'")
     if len(cleaned) > 120:
         cleaned = cleaned[:120].strip()
     return cleaned
+
+
+def _extract_location_from_name_garbage(name: str) -> Tuple[Optional[str], Optional[str]]:
+    # pattern captures value after location": or location\":
+    # it handles potential quotes around key and value
+    # e.g. location":"City, Country" or location\":\"City, Country\"
+    match = re.search(r"location\\?\"\\?:\s*\\?\"([^\"]+)\"", name, re.IGNORECASE)
+    if not match:
+        return None, None
+    
+    value = match.group(1).strip()
+    if value.endswith("\\"):
+        value = value[:-1]
+    if not value:
+        return None, None
+        
+    parts = [p.strip() for p in value.split(",")]
+    city = parts[0] if parts else None
+    country = parts[-1] if len(parts) > 1 else None
+    
+    return city, country
 
 
 def _is_full_marathon_name(name: str) -> bool:
