@@ -15,6 +15,8 @@ from urllib.request import Request, urlopen
 logger = logging.getLogger()
 logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))
 
+DEFAULT_BUCKET_NAME = "runcalcs"
+
 DEFAULT_SEED_URLS = [
     "https://www.ahotu.com/calendar/running/marathon",
     "https://www.runningintheusa.com/classic/list/marathon/upcoming",
@@ -244,7 +246,7 @@ def store_races(s3_client: Any, bucket: str, key: str, races: List[Race]) -> Non
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     import boto3
 
-    bucket = os.environ["RACES_BUCKET"]
+    bucket = os.getenv("RACES_BUCKET", DEFAULT_BUCKET_NAME)
     key = os.getenv("RACES_KEY", "races/marathons.json")
     max_pages = int(os.getenv("MAX_PAGES", "80"))
     seed_urls = [

@@ -5,6 +5,8 @@ Description: Daily marathon race crawler lambda
 Resources:
   MarathonRacesBucket:
     Type: AWS::S3::Bucket
+    Properties:
+      BucketName: runcalcs
 
   MarathonRaceCrawlerFunction:
     Type: AWS::Serverless::Function
@@ -20,7 +22,6 @@ Resources:
             BucketName: !Ref MarathonRacesBucket
       Environment:
         Variables:
-          RACES_BUCKET: !Ref MarathonRacesBucket
           RACES_KEY: races/marathons.json
           MAX_PAGES: 80
       Events:

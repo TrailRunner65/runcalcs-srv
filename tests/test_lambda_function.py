@@ -75,3 +75,29 @@ def test_extract_entry_requirements():
 
     assert "qualification standard" in requirements
     assert "entry fee" in requirements
+
+
+def test_lambda_handler_defaults_bucket_name(monkeypatch):
+    import sys
+    import types
+    import lambda_function as lf
+
+    captured = {}
+
+    fake_boto3 = types.SimpleNamespace(client=lambda service: object())
+    monkeypatch.setitem(sys.modules, "boto3", fake_boto3)
+    monkeypatch.delenv("RACES_BUCKET", raising=False)
+    monkeypatch.setenv("RACES_KEY", "races/marathons.json")
+
+    monkeypatch.setattr(lf, "load_existing_races", lambda *args, **kwargs: [])
+    monkeypatch.setattr(lf, "crawl_sources", lambda *args, **kwargs: [])
+
+    def fake_store(_s3, bucket, _key, _races):
+        captured["bucket"] = bucket
+
+    monkeypatch.setattr(lf, "store_races", fake_store)
+
+    result = lf.lambda_handler({}, None)
+
+    assert result["statusCode"] == 200
+    assert captured["bucket"] == "runcalcs"

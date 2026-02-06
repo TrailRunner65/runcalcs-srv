@@ -3,6 +3,7 @@
 AWS SAM project that deploys a daily Lambda to discover upcoming marathon races, deduplicate them, and persist the merged dataset to S3.
 
 ## What it does
+- Uses the S3 bucket name `runcalcs` by default (no bucket name is required in the Lambda event).
 - Runs once per day at midnight UTC via EventBridge schedule (`cron(0 0 * * ? *)`).
 - Crawls a set of seed marathon race calendar pages.
 - Extracts race metadata from `application/ld+json` Event markup.
@@ -59,7 +60,7 @@ sam logs -n MarathonRaceCrawlerFunction --stack-name marathon-race-crawler --tai
 ```
 
 ## Lambda environment variables
-- `RACES_BUCKET` (required)
+- `RACES_BUCKET` (optional override; defaults to `runcalcs`)
 - `RACES_KEY` (default: `races/marathons.json`)
 - `MAX_PAGES` (default: `80`)
 - `SEED_URLS` (comma-separated list; defaults are in code)
