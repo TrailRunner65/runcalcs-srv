@@ -19,9 +19,10 @@ DEFAULT_BUCKET_NAME = "runcalcs"
 
 DEFAULT_SEED_URLS = [
     "https://aims-worldrunning.org/calendar/",
-    "https://www.ahotu.com/calendar/running/marathon",
     "https://www.runningintheusa.com/classic/list/marathon/upcoming",
-    "https://marathons.ahotu.com/calendar/marathon",
+    "https://worldsmarathons.com/",
+    "https://aims-worldrunning.org/calendar.html",
+    "https://worldathletics.org/competitions/world-athletics-label-road-races/calendar-results",
     "https://www.worldmarathonmajors.com/races",
     "https://www.baa.org/",
     "https://www.nyrr.org/tcsnycmarathon",
@@ -190,16 +191,21 @@ def _parse_fallback_races(html: str, page_url: str) -> List[Race]:
                 if not normalized_date:
                     continue
 
-                garbage_city, garbage_country = _extract_location_from_name_garbage(match.group("name"))
+                raw_name = match.group("name")
+                garbage_city, garbage_country = _extract_location_from_name_garbage(raw_name)
+                name_city = name_country = None
+                name = _clean_race_name(raw_name)
+                if source == "Ahotu":
+                    name, name_city, name_country = _split_location_from_name(name)
 
                 races.append(
                     Race(
                         name=name,
                         date_start=normalized_date,
                         date_end=None,
-                        city=garbage_city,
+                        city=garbage_city or name_city,
                         region=None,
-                        country=garbage_country,
+                        country=garbage_country or name_country,
                         lat=None,
                         lng=None,
                         distance_km=42.195,
@@ -257,6 +263,12 @@ def _parse_jsonld(doc: str, page_url: str) -> List[Race]:
             status = _normalize_status(item.get("eventStatus"))
             website_url = str(item.get("url") or page_url)
             source_event_id = _extract_source_event_id(item)
+            if source == "Ahotu":
+                name, name_city, name_country = _split_location_from_name(name)
+                if not city and name_city:
+                    city = name_city
+                if not country and name_country:
+                    country = name_country
             races.append(
                 Race(
                     name=name,
@@ -345,7 +357,10 @@ def _is_same_race(left: Race, right: Race) -> bool:
     if domain_left and domain_right and domain_left != domain_right:
         return False
 
-    return _dates_within_one_day(left.date_start, right.date_start)
+    if left.date_start and right.date_start:
+        return _dates_within_one_day(left.date_start, right.date_start)
+
+    return True
 
 
 def _normalize_text(value: Optional[str]) -> Optional[str]:
@@ -456,6 +471,43 @@ def _extract_location_from_name_garbage(name: str) -> Tuple[Optional[str], Optio
     return city, country
 
 
+def _split_location_from_name(name: str) -> Tuple[str, Optional[str], Optional[str]]:
+    if not name:
+        return name, None, None
+
+    candidate = None
+    paren_match = re.search(r"\(([^()]+)\)\s*$", name)
+    if paren_match:
+        candidate = paren_match.group(1).strip()
+        name = name[: paren_match.start()].strip(" -–—|")
+
+    if not candidate:
+        for sep in (" - ", " – ", " — ", " | "):
+            if sep in name:
+                head, tail = name.rsplit(sep, 1)
+                if "," in tail and "marathon" not in tail.lower():
+                    candidate = tail.strip()
+                    name = head.strip()
+                    break
+
+    if not candidate and "," in name:
+        parts = [p.strip() for p in name.split(",") if p.strip()]
+        if len(parts) >= 3 and "marathon" in parts[0].lower():
+            candidate = ", ".join(parts[-2:])
+            name = ", ".join(parts[:-2]).strip()
+
+    if not candidate:
+        return name, None, None
+
+    location_parts = [p.strip() for p in candidate.split(",") if p.strip()]
+    if len(location_parts) < 2:
+        return name, None, None
+
+    city = location_parts[0]
+    country = location_parts[-1]
+    return name, city, country
+
+
 def _is_full_marathon_name(name: str) -> bool:
     lowered = name.lower()
     if "marathon" not in lowered:
@@ -488,6 +540,8 @@ def _should_visit_link(base_domain: str, href: str) -> bool:
     if parsed.netloc and parsed.netloc != base_domain:
         return False
     lower = href.lower()
+    if "ahotu.com" in lower:
+        return False
     return any(token in lower for token in ("marathon", "race", "calendar"))
 
 
@@ -514,6 +568,8 @@ def crawl_sources(seed_urls: List[str], max_pages: int = 80, timeout_seconds: in
         if url in visited:
             continue
         visited.add(url)
+        if "ahotu.com" in urlparse(url).netloc.lower():
+            continue
 
         html = _fetch_url(url, timeout_seconds)
         if not html:
@@ -522,7 +578,7 @@ def crawl_sources(seed_urls: List[str], max_pages: int = 80, timeout_seconds: in
         page_races = _parse_jsonld(html, url)
         if not page_races:
             page_races = _parse_fallback_races(html, url)
-        races.extend(page_races)
+        races.extend([race for race in page_races if race.source != "Ahotu"])
 
         domain = urlparse(url).netloc
         for link in _extract_links(html, url):
