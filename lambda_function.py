@@ -18,45 +18,89 @@ logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))
 DEFAULT_BUCKET_NAME = "runcalcs"
 
 DEFAULT_SEED_URLS = [
+    "https://aims-worldrunning.org/calendar/",
     "https://www.ahotu.com/calendar/running/marathon",
     "https://www.runningintheusa.com/classic/list/marathon/upcoming",
     "https://marathons.ahotu.com/calendar/marathon",
+    "https://www.worldmarathonmajors.com/races",
+    "https://www.baa.org/",
+    "https://www.nyrr.org/tcsnycmarathon",
+    "https://www.chicagomarathon.com/",
+    "https://www.bmw-berlin-marathon.com/en/",
+    "https://www.londonmarathon.co.uk/",
+    "https://www.tokyo-marathon.org/en/",
+]
+
+MAJOR_MARATHONS = [
+    {"name": "Tokyo Marathon", "website_url": "https://www.tokyo-marathon.org/en/"},
+    {"name": "Boston Marathon", "website_url": "https://www.baa.org/"},
+    {"name": "London Marathon", "website_url": "https://www.londonmarathon.co.uk/"},
+    {"name": "Berlin Marathon", "website_url": "https://www.bmw-berlin-marathon.com/en/"},
+    {"name": "Chicago Marathon", "website_url": "https://www.chicagomarathon.com/"},
+    {"name": "New York City Marathon", "website_url": "https://www.nyrr.org/tcsnycmarathon"},
 ]
 
 
 @dataclass
 class Race:
     name: str
-    date: str
-    location: str
+    date_start: Optional[str]
+    date_end: Optional[str]
+    city: Optional[str]
+    region: Optional[str]
+    country: Optional[str]
+    lat: Optional[float]
+    lng: Optional[float]
+    distance_km: float
+    website_url: str
+    source: str
+    source_event_id: Optional[str]
     description: str
     entry_requirements: str
-    source_url: str
+    last_seen_at: str
+    last_verified_at: Optional[str]
+    status: str
 
-    def to_dict(self) -> Dict[str, str]:
+    def to_dict(self) -> Dict[str, Any]:
         return self.__dict__.copy()
 
 
-def _extract_location(location_obj: Any) -> str:
+def _extract_location_fields(location_obj: Any) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[float], Optional[float]]:
     if isinstance(location_obj, str):
-        return location_obj.strip()
+        return location_obj.strip(), None, None, None, None
     if not isinstance(location_obj, dict):
-        return "Unknown"
+        return None, None, None, None, None
 
     address = location_obj.get("address", {})
-    parts = [location_obj.get("name")]
-    if isinstance(address, str):
-        parts.append(address)
-    elif isinstance(address, dict):
-        parts.extend(
-            [
-                address.get("addressLocality"),
-                address.get("addressRegion"),
-                address.get("addressCountry"),
-            ]
-        )
-    cleaned = [p.strip() for p in parts if isinstance(p, str) and p.strip()]
-    return ", ".join(cleaned) if cleaned else "Unknown"
+    city = region = country = None
+    if isinstance(address, dict):
+        city = address.get("addressLocality")
+        region = address.get("addressRegion")
+        country = address.get("addressCountry")
+    elif isinstance(address, str):
+        city = address.strip()
+
+    geo = location_obj.get("geo") if isinstance(location_obj, dict) else None
+    lat = lng = None
+    if isinstance(geo, dict):
+        lat = geo.get("latitude")
+        lng = geo.get("longitude")
+
+    return _clean_optional(city), _clean_optional(region), _clean_optional(country), _to_float(lat), _to_float(lng)
+
+
+def _clean_optional(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _to_float(value: Any) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _extract_entry_requirements(text: str) -> str:
@@ -122,6 +166,9 @@ def _parse_fallback_races(html: str, page_url: str) -> List[Race]:
         ),
     ]
 
+    now = datetime.now(timezone.utc).isoformat()
+    source = _source_from_url(page_url)
+
     for pattern in patterns:
         for match in pattern.finditer(html):
             raw_date = match.group("date")
@@ -134,11 +181,22 @@ def _parse_fallback_races(html: str, page_url: str) -> List[Race]:
             races.append(
                 Race(
                     name=name,
-                    date=normalized_date,
-                    location="Unknown",
+                    date_start=normalized_date,
+                    date_end=None,
+                    city=None,
+                    region=None,
+                    country=None,
+                    lat=None,
+                    lng=None,
+                    distance_km=42.195,
+                    website_url=page_url,
+                    source=source,
+                    source_event_id=None,
                     description="",
                     entry_requirements="Not specified",
-                    source_url=page_url,
+                    last_seen_at=now,
+                    last_verified_at=None,
+                    status="unknown",
                 )
             )
 
@@ -162,6 +220,8 @@ def _extract_links(html: str, page_url: str) -> List[str]:
 
 def _parse_jsonld(doc: str, page_url: str) -> List[Race]:
     races: List[Race] = []
+    now = datetime.now(timezone.utc).isoformat()
+    source = _source_from_url(page_url)
     for blob in _extract_jsonld_blobs(doc):
         try:
             data = json.loads(blob)
@@ -175,38 +235,161 @@ def _parse_jsonld(doc: str, page_url: str) -> List[Race]:
             if not name or "marathon" not in name.lower():
                 continue
             start_date = _normalize_date(item.get("startDate"))
-            if not start_date:
+            end_date = _normalize_date(item.get("endDate"))
+            if not start_date and not end_date:
                 continue
             description = str(item.get("description") or "").strip()
+            city, region, country, lat, lng = _extract_location_fields(item.get("location"))
+            status = _normalize_status(item.get("eventStatus"))
+            website_url = str(item.get("url") or page_url)
+            source_event_id = _extract_source_event_id(item)
             races.append(
                 Race(
                     name=name,
-                    date=start_date,
-                    location=_extract_location(item.get("location")),
+                    date_start=start_date or end_date,
+                    date_end=end_date,
+                    city=city,
+                    region=region,
+                    country=country,
+                    lat=lat,
+                    lng=lng,
+                    distance_km=42.195,
+                    website_url=website_url,
+                    source=source,
+                    source_event_id=source_event_id,
                     description=description,
                     entry_requirements=_extract_entry_requirements(description),
-                    source_url=str(item.get("url") or page_url),
+                    last_seen_at=now,
+                    last_verified_at=now,
+                    status=status,
                 )
             )
     return races
 
 
-def _race_key(race: Race) -> Tuple[str, str, str]:
-    norm = lambda x: re.sub(r"\s+", " ", x.lower()).strip()
-    return norm(race.name), race.date, norm(race.location)
+def _race_key(race: Race) -> Tuple[str, Optional[str], Optional[str], Optional[str], str]:
+    norm = lambda x: re.sub(r"\s+", " ", x.lower()).strip() if isinstance(x, str) else None
+    return (
+        norm(race.name),
+        norm(race.city),
+        norm(race.country),
+        _domain_from_url(race.website_url),
+        race.date_start,
+    )
 
 
 def _dedupe_and_filter(races: Iterable[Race], today: date) -> List[Race]:
-    unique: Dict[Tuple[str, str, str], Race] = {}
+    unique: List[Race] = []
+
     for race in races:
-        try:
-            race_day = date.fromisoformat(race.date)
-        except ValueError:
+        race_day = _safe_date(race.date_start)
+        if race_day and race_day < today:
             continue
-        if race_day < today:
-            continue
-        unique.setdefault(_race_key(race), race)
-    return sorted(unique.values(), key=lambda r: (r.date, r.name.lower()))
+
+        matched = False
+        for existing in unique:
+            if _is_same_race(existing, race):
+                matched = True
+                existing.last_seen_at = race.last_seen_at
+                if race.last_verified_at:
+                    existing.last_verified_at = race.last_verified_at
+                if not existing.website_url and race.website_url:
+                    existing.website_url = race.website_url
+                break
+        if not matched:
+            unique.append(race)
+
+    return sorted(unique, key=lambda r: (r.date_start or "9999-12-31", r.name.lower()))
+
+
+def _safe_date(value: Optional[str]) -> Optional[date]:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _is_same_race(left: Race, right: Race) -> bool:
+    name_left = _normalize_text(left.name)
+    name_right = _normalize_text(right.name)
+    if not name_left or not name_right or name_left != name_right:
+        return False
+
+    city_left = _normalize_text(left.city)
+    city_right = _normalize_text(right.city)
+    country_left = _normalize_text(left.country)
+    country_right = _normalize_text(right.country)
+    if city_left and city_right and city_left != city_right:
+        return False
+    if country_left and country_right and country_left != country_right:
+        return False
+
+    domain_left = _domain_from_url(left.website_url)
+    domain_right = _domain_from_url(right.website_url)
+    if domain_left and domain_right and domain_left != domain_right:
+        return False
+
+    return _dates_within_one_day(left.date_start, right.date_start)
+
+
+def _normalize_text(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    return re.sub(r"\s+", " ", value.strip().lower())
+
+
+def _dates_within_one_day(left: Optional[str], right: Optional[str]) -> bool:
+    left_date = _safe_date(left)
+    right_date = _safe_date(right)
+    if not left_date or not right_date:
+        return False
+    return abs((left_date - right_date).days) <= 1
+
+
+def _domain_from_url(url: str) -> str:
+    try:
+        return urlparse(url).netloc.lower()
+    except Exception:
+        return ""
+
+
+def _source_from_url(url: str) -> str:
+    domain = _domain_from_url(url)
+    if "aims-worldrunning.org" in domain:
+        return "AIMS"
+    if "ahotu.com" in domain:
+        return "Ahotu"
+    if "worldmarathonmajors.com" in domain:
+        return "World Marathon Majors"
+    if "runningintheusa.com" in domain:
+        return "Running in the USA"
+    return domain or "unknown"
+
+
+def _extract_source_event_id(item: Dict[str, Any]) -> Optional[str]:
+    for key in ("@id", "identifier"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, dict):
+            inner = value.get("@id") or value.get("value")
+            if isinstance(inner, str) and inner.strip():
+                return inner.strip()
+    return None
+
+
+def _normalize_status(raw: Any) -> str:
+    if isinstance(raw, str):
+        lowered = raw.lower()
+        if "cancel" in lowered:
+            return "cancelled"
+        if "postpon" in lowered:
+            return "unknown"
+        if "scheduled" in lowered:
+            return "scheduled"
+    return "unknown"
 
 
 def _should_visit_link(base_domain: str, href: str) -> bool:
@@ -260,6 +443,34 @@ def crawl_sources(seed_urls: List[str], max_pages: int = 80, timeout_seconds: in
     return races
 
 
+def curated_major_marathons() -> List[Race]:
+    now = datetime.now(timezone.utc).isoformat()
+    curated = []
+    for item in MAJOR_MARATHONS:
+        curated.append(
+            Race(
+                name=item["name"],
+                date_start=None,
+                date_end=None,
+                city=None,
+                region=None,
+                country=None,
+                lat=None,
+                lng=None,
+                distance_km=42.195,
+                website_url=item["website_url"],
+                source="World Marathon Majors",
+                source_event_id=None,
+                description="",
+                entry_requirements="Not specified",
+                last_seen_at=now,
+                last_verified_at=None,
+                status="unknown",
+            )
+        )
+    return curated
+
+
 def load_existing_races(s3_client: Any, bucket: str, key: str) -> List[Race]:
     try:
         obj = s3_client.get_object(Bucket=bucket, Key=key)
@@ -269,7 +480,48 @@ def load_existing_races(s3_client: Any, bucket: str, key: str) -> List[Race]:
             return []
         raise
     payload = json.loads(obj["Body"].read().decode("utf-8"))
-    return [Race(**item) for item in payload.get("races", []) if isinstance(item, dict)]
+    races = []
+    for item in payload.get("races", []):
+        if not isinstance(item, dict):
+            continue
+        races.append(_race_from_payload(item))
+    return races
+
+
+def _race_from_payload(item: Dict[str, Any]) -> Race:
+    if "date_start" in item:
+        return Race(**item)
+
+    now = datetime.now(timezone.utc).isoformat()
+    name = item.get("name", "")
+    date_start = item.get("date")
+    location = item.get("location") or ""
+    city, region, country = None, None, None
+    if isinstance(location, str):
+        parts = [p.strip() for p in location.split(",") if p.strip()]
+        if parts:
+            city = parts[0]
+        if len(parts) > 1:
+            country = parts[-1]
+    return Race(
+        name=name,
+        date_start=date_start,
+        date_end=None,
+        city=city,
+        region=region,
+        country=country,
+        lat=None,
+        lng=None,
+        distance_km=42.195,
+        website_url=item.get("source_url") or "",
+        source=_source_from_url(item.get("source_url") or ""),
+        source_event_id=None,
+        description=item.get("description") or "",
+        entry_requirements=item.get("entry_requirements") or "Not specified",
+        last_seen_at=now,
+        last_verified_at=None,
+        status="unknown",
+    )
 
 
 def store_races(s3_client: Any, bucket: str, key: str, races: List[Race]) -> None:
@@ -299,7 +551,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     s3_client = boto3.client("s3")
     existing = load_existing_races(s3_client, bucket, key)
     discovered = crawl_sources(seed_urls=seed_urls, max_pages=max_pages)
-    filtered = _dedupe_and_filter(existing + discovered, today=datetime.now(timezone.utc).date())
+    curated = curated_major_marathons()
+    filtered = _dedupe_and_filter(existing + discovered + curated, today=datetime.now(timezone.utc).date())
     store_races(s3_client, bucket, key, filtered)
 
     return {

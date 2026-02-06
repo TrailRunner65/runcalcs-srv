@@ -1,6 +1,13 @@
 from datetime import date
 
-from lambda_function import Race, _dedupe_and_filter, _extract_entry_requirements, _parse_jsonld, _parse_fallback_races
+from lambda_function import (
+    Race,
+    _dedupe_and_filter,
+    _extract_entry_requirements,
+    _parse_jsonld,
+    _parse_fallback_races,
+    curated_major_marathons,
+)
 
 
 def test_parse_jsonld_extracts_marathon_event():
@@ -31,7 +38,7 @@ def test_parse_jsonld_extracts_marathon_event():
 
     assert len(races) == 1
     assert races[0].name == "City Spring Marathon"
-    assert races[0].date == "2030-04-12"
+    assert races[0].date_start == "2030-04-12"
     assert "lottery" in races[0].entry_requirements
 
 
@@ -39,34 +46,67 @@ def test_dedupe_and_filter_removes_duplicates_and_past_dates():
     races = [
         Race(
             name="City Marathon",
-            date="2020-01-01",
-            location="Boston, US",
+            date_start="2020-01-01",
+            date_end=None,
+            city="Boston",
+            region=None,
+            country="US",
+            lat=None,
+            lng=None,
+            distance_km=42.195,
+            website_url="https://a.example",
+            source="Example",
+            source_event_id=None,
             description="Old race",
             entry_requirements="Not specified",
-            source_url="https://a.example",
+            last_seen_at="2024-01-01T00:00:00+00:00",
+            last_verified_at=None,
+            status="scheduled",
         ),
         Race(
             name="City Marathon",
-            date="2030-01-01",
-            location="Boston, US",
+            date_start="2030-01-01",
+            date_end=None,
+            city="Boston",
+            region=None,
+            country="US",
+            lat=None,
+            lng=None,
+            distance_km=42.195,
+            website_url="https://a.example",
+            source="Example",
+            source_event_id=None,
             description="Upcoming race",
             entry_requirements="Not specified",
-            source_url="https://a.example",
+            last_seen_at="2024-01-01T00:00:00+00:00",
+            last_verified_at=None,
+            status="scheduled",
         ),
         Race(
             name=" City  Marathon ",
-            date="2030-01-01",
-            location=" Boston, US ",
+            date_start="2030-01-02",
+            date_end=None,
+            city="Boston",
+            region=None,
+            country="US",
+            lat=None,
+            lng=None,
+            distance_km=42.195,
+            website_url="https://a.example",
+            source="Example",
+            source_event_id=None,
             description="Duplicate upcoming race",
             entry_requirements="Not specified",
-            source_url="https://b.example",
+            last_seen_at="2024-01-01T00:00:00+00:00",
+            last_verified_at=None,
+            status="scheduled",
         ),
     ]
 
     filtered = _dedupe_and_filter(races, today=date(2024, 1, 1))
 
     assert len(filtered) == 1
-    assert filtered[0].date == "2030-01-01"
+    assert filtered[0].date_start == "2030-01-01"
 
 
 def test_extract_entry_requirements():
@@ -85,9 +125,9 @@ def test_parse_fallback_races_extracts_marathon_and_date():
     races = _parse_fallback_races(html, "https://example.com")
 
     assert len(races) == 2
-    assert races[0].date == "2029-05-22"
+    assert races[0].date_start == "2029-05-22"
     assert "marathon" in races[0].name.lower()
-    assert races[1].date == "2031-06-03"
+    assert races[1].date_start == "2031-06-03"
 
 
 def test_lambda_handler_defaults_bucket_name(monkeypatch):
@@ -114,3 +154,15 @@ def test_lambda_handler_defaults_bucket_name(monkeypatch):
 
     assert result["statusCode"] == 200
     assert captured["bucket"] == "runcalcs"
+
+
+def test_curated_major_marathons_includes_six_majors():
+    majors = curated_major_marathons()
+    names = {race.name for race in majors}
+
+    assert "Tokyo Marathon" in names
+    assert "Boston Marathon" in names
+    assert "London Marathon" in names
+    assert "Berlin Marathon" in names
+    assert "Chicago Marathon" in names
+    assert "New York City Marathon" in names
