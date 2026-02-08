@@ -19,6 +19,8 @@ DEFAULT_SEED_URLS = [
     "https://www.ahotu.com/calendar/running/marathon",
     "https://www.runningintheusa.com/classic/list/marathon/upcoming",
     "https://marathons.ahotu.com/calendar/marathon",
+    "https://aims-worldrunning.org/calendar.html",
+    "https://www.worldmarathonmajors.com",
 ]
 
 
@@ -100,7 +102,14 @@ def _normalize_date(raw: Any) -> Optional[str]:
         return datetime.fromisoformat(value).date().isoformat()
     except ValueError:
         match = re.match(r"^(\d{4}-\d{2}-\d{2})", value)
-        return match.group(1) if match else None
+        if match:
+            return match.group(1)
+    for pattern in ("%d %B %Y", "%d %b %Y", "%B %d, %Y", "%b %d, %Y"):
+        try:
+            return datetime.strptime(value, pattern).date().isoformat()
+        except ValueError:
+            continue
+    return None
 
 
 def _extract_jsonld_blobs(html: str) -> List[str]:
@@ -116,6 +125,127 @@ def _extract_links(html: str, page_url: str) -> List[str]:
     for match in re.findall(r'<a[^>]+href=["\']([^"\']+)["\']', html, re.IGNORECASE):
         links.append(urljoin(page_url, unescape(match)).split("#", 1)[0])
     return links
+
+
+def _strip_html(text: str) -> str:
+    cleaned = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", unescape(cleaned)).strip()
+
+
+def _extract_json_string_value(payload: str, key: str) -> Optional[str]:
+    pattern = rf'"{re.escape(key)}"\s*:\s*"((?:\\\\.|[^"\\\\])*)"'
+    match = re.search(pattern, payload)
+    if not match:
+        return None
+    try:
+        return json.loads(f'"{match.group(1)}"')
+    except json.JSONDecodeError:
+        return match.group(1)
+
+
+def _extract_tag_attribute(tag: str, attr: str) -> Optional[str]:
+    match = re.search(rf'{re.escape(attr)}=["\']([^"\']+)["\']', tag, re.IGNORECASE)
+    if match:
+        return unescape(match.group(1)).strip()
+    return None
+
+
+def _parse_aims_calendar(doc: str, page_url: str) -> List[Race]:
+    if "aims-worldrunning.org" not in urlparse(page_url).netloc:
+        return []
+
+    races: List[Race] = []
+    for row in re.findall(r"<tr[^>]*>(.*?)</tr>", doc, re.IGNORECASE | re.DOTALL):
+        cells = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.IGNORECASE | re.DOTALL)
+        if len(cells) < 3:
+            continue
+        values = [_strip_html(cell) for cell in cells]
+        start_date = _normalize_date(values[0])
+        if not start_date:
+            continue
+        name = values[1]
+        if "marathon" not in name.lower():
+            continue
+        city = values[2] if len(values) >= 4 else None
+        country = values[3] if len(values) >= 4 else (values[2] if len(values) == 3 else None)
+        location_parts = [part for part in (city, country) if part]
+        location = ", ".join(location_parts) if location_parts else "Unknown"
+        races.append(
+            Race(
+                name=name,
+                date=start_date,
+                location=location,
+                description="AIMS World Running calendar listing",
+                entry_requirements="Not specified",
+                source_url=page_url,
+            )
+        )
+
+    if races:
+        return races
+
+    for tag in re.findall(r"<[^>]+data-date=[\"'][^\"']+[\"'][^>]*>", doc, re.IGNORECASE):
+        date_value = _extract_tag_attribute(tag, "data-date")
+        start_date = _normalize_date(date_value) if date_value else None
+        name = _extract_tag_attribute(tag, "data-title") or _extract_tag_attribute(tag, "data-name")
+        if not start_date or not name or "marathon" not in name.lower():
+            continue
+        city = _extract_tag_attribute(tag, "data-city")
+        country = _extract_tag_attribute(tag, "data-country")
+        location_parts = [part for part in (city, country) if part]
+        location = ", ".join(location_parts) if location_parts else "Unknown"
+        races.append(
+            Race(
+                name=name,
+                date=start_date,
+                location=location,
+                description="AIMS World Running calendar listing",
+                entry_requirements="Not specified",
+                source_url=page_url,
+            )
+        )
+
+    return races
+
+
+def _parse_world_marathon_majors(doc: str, page_url: str) -> List[Race]:
+    if "worldmarathonmajors.com" not in urlparse(page_url).netloc:
+        return []
+
+    races: List[Race] = []
+    blocks = re.findall(r"\{[^{}]{0,1000}date_start[^{}]{0,1000}\}", doc, re.IGNORECASE | re.DOTALL)
+    for block in blocks:
+        name = (
+            _extract_json_string_value(block, "name")
+            or _extract_json_string_value(block, "title")
+            or _extract_json_string_value(block, "race_name")
+        )
+        if not name or "marathon" not in name.lower():
+            continue
+
+        date_start = _extract_json_string_value(block, "date_start")
+        start_date = _normalize_date(date_start)
+        if not start_date:
+            continue
+
+        city = _extract_json_string_value(block, "city")
+        country = _extract_json_string_value(block, "country")
+        location_parts = [part for part in (city, country) if part]
+        location = ", ".join(location_parts) if location_parts else "Unknown"
+        source_url = _extract_json_string_value(block, "url") or page_url
+
+        races.append(
+            Race(
+                name=name,
+                date=start_date,
+                location=location,
+                description="World Marathon Majors listing",
+                entry_requirements="Not specified",
+                source_url=source_url,
+            )
+        )
+
+    return races
 
 
 def _parse_jsonld(doc: str, page_url: str) -> List[Race]:
@@ -206,6 +336,8 @@ def crawl_sources(seed_urls: List[str], max_pages: int = 80, timeout_seconds: in
             continue
 
         races.extend(_parse_jsonld(html, url))
+        races.extend(_parse_aims_calendar(html, url))
+        races.extend(_parse_world_marathon_majors(html, url))
 
         domain = urlparse(url).netloc
         for link in _extract_links(html, url):

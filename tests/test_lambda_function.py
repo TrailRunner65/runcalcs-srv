@@ -1,6 +1,13 @@
 from datetime import date
 
-from lambda_function import Race, _dedupe_and_filter, _extract_entry_requirements, _parse_jsonld
+from lambda_function import (
+    Race,
+    _dedupe_and_filter,
+    _extract_entry_requirements,
+    _parse_jsonld,
+    _parse_aims_calendar,
+    _parse_world_marathon_majors,
+)
 
 
 def test_parse_jsonld_extracts_marathon_event():
@@ -75,3 +82,44 @@ def test_extract_entry_requirements():
 
     assert "qualification standard" in requirements
     assert "entry fee" in requirements
+
+
+def test_parse_world_marathon_majors_extracts_location_fields():
+    html = """
+    <script>
+    window.__data = {
+      "name": "Example City Marathon",
+      "date_start": "2031-09-14",
+      "city": "Example City",
+      "country": "Exampleland",
+      "url": "https://www.worldmarathonmajors.com/example"
+    };
+    </script>
+    """
+
+    races = _parse_world_marathon_majors(html, "https://www.worldmarathonmajors.com")
+
+    assert len(races) == 1
+    assert races[0].date == "2031-09-14"
+    assert races[0].location == "Example City, Exampleland"
+
+
+def test_parse_aims_calendar_extracts_table_rows():
+    html = """
+    <table>
+      <tr><th>Date</th><th>Race</th><th>City</th><th>Country</th></tr>
+      <tr>
+        <td>14 Sep 2032</td>
+        <td><a href="https://example.com">Example Marathon</a></td>
+        <td>Example City</td>
+        <td>Exampleland</td>
+      </tr>
+    </table>
+    """
+
+    races = _parse_aims_calendar(html, "https://aims-worldrunning.org/calendar.html")
+
+    assert len(races) == 1
+    assert races[0].name == "Example Marathon"
+    assert races[0].date == "2032-09-14"
+    assert races[0].location == "Example City, Exampleland"
