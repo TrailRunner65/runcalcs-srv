@@ -303,6 +303,11 @@ def _should_visit_link(base_domain: str, href: str) -> bool:
         return False
     if parsed.netloc and parsed.netloc != base_domain:
         return False
+    path = parsed.path.lower()
+    if path.endswith((".pdf", ".jpg", ".jpeg", ".png", ".gif", ".zip", ".ics", ".uri")):
+        return False
+    if "archived/majors-v1" in path:
+        return False
     lower = href.lower()
     return any(token in lower for token in ("marathon", "race", "calendar"))
 
@@ -315,7 +320,32 @@ def _fetch_url(url: str, timeout_seconds: int) -> Optional[str]:
             if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
                 return None
             return response.read().decode("utf-8", errors="ignore")
-    except (HTTPError, URLError, TimeoutError) as exc:
+    except HTTPError as exc:
+        if exc.code == 403:
+            fallback = Request(
+                url,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.9",
+                },
+            )
+            try:
+                with urlopen(fallback, timeout=timeout_seconds) as response:
+                    content_type = response.headers.get("Content-Type", "")
+                    if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
+                        return None
+                    return response.read().decode("utf-8", errors="ignore")
+            except (HTTPError, URLError, TimeoutError) as retry_exc:
+                logger.warning("Failed fetching %s after retry: %s", url, retry_exc)
+                return None
+        logger.warning("Failed fetching %s: %s", url, exc)
+        return None
+    except (URLError, TimeoutError) as exc:
         logger.warning("Failed fetching %s: %s", url, exc)
         return None
 

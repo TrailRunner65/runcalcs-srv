@@ -7,6 +7,7 @@ from lambda_function import (
     _parse_jsonld,
     _parse_aims_calendar,
     _parse_world_marathon_majors,
+    _should_visit_link,
 )
 
 
@@ -123,3 +124,9 @@ def test_parse_aims_calendar_extracts_table_rows():
     assert races[0].name == "Example Marathon"
     assert races[0].date == "2032-09-14"
     assert races[0].location == "Example City, Exampleland"
+
+
+def test_should_visit_link_skips_blocked_paths():
+    assert not _should_visit_link("example.com", "https://example.com/result.uri")
+    assert not _should_visit_link("example.com", "https://example.com/archived/majors-v1")
+    assert not _should_visit_link("example.com", "https://example.com/assets/guide.pdf")
