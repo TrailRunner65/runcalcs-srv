@@ -19,6 +19,8 @@ DEFAULT_SEED_URLS = [
     "https://www.ahotu.com/calendar/running/marathon",
     "https://www.runningintheusa.com/classic/list/marathon/upcoming",
     "https://marathons.ahotu.com/calendar/marathon",
+    "https://aims-worldrunning.org/calendar.html",
+    "https://www.worldmarathonmajors.com",
 ]
 
 
@@ -118,6 +120,57 @@ def _extract_links(html: str, page_url: str) -> List[str]:
     return links
 
 
+def _extract_json_string_value(payload: str, key: str) -> Optional[str]:
+    pattern = rf'"{re.escape(key)}"\s*:\s*"((?:\\\\.|[^"\\\\])*)"'
+    match = re.search(pattern, payload)
+    if not match:
+        return None
+    try:
+        return json.loads(f'"{match.group(1)}"')
+    except json.JSONDecodeError:
+        return match.group(1)
+
+
+def _parse_world_marathon_majors(doc: str, page_url: str) -> List[Race]:
+    if "worldmarathonmajors.com" not in urlparse(page_url).netloc:
+        return []
+
+    races: List[Race] = []
+    blocks = re.findall(r"\{[^{}]{0,1000}date_start[^{}]{0,1000}\}", doc, re.IGNORECASE | re.DOTALL)
+    for block in blocks:
+        name = (
+            _extract_json_string_value(block, "name")
+            or _extract_json_string_value(block, "title")
+            or _extract_json_string_value(block, "race_name")
+        )
+        if not name or "marathon" not in name.lower():
+            continue
+
+        date_start = _extract_json_string_value(block, "date_start")
+        start_date = _normalize_date(date_start)
+        if not start_date:
+            continue
+
+        city = _extract_json_string_value(block, "city")
+        country = _extract_json_string_value(block, "country")
+        location_parts = [part for part in (city, country) if part]
+        location = ", ".join(location_parts) if location_parts else "Unknown"
+        source_url = _extract_json_string_value(block, "url") or page_url
+
+        races.append(
+            Race(
+                name=name,
+                date=start_date,
+                location=location,
+                description="World Marathon Majors listing",
+                entry_requirements="Not specified",
+                source_url=source_url,
+            )
+        )
+
+    return races
+
+
 def _parse_jsonld(doc: str, page_url: str) -> List[Race]:
     races: List[Race] = []
     for blob in _extract_jsonld_blobs(doc):
@@ -206,6 +259,7 @@ def crawl_sources(seed_urls: List[str], max_pages: int = 80, timeout_seconds: in
             continue
 
         races.extend(_parse_jsonld(html, url))
+        races.extend(_parse_world_marathon_majors(html, url))
 
         domain = urlparse(url).netloc
         for link in _extract_links(html, url):
