@@ -16,7 +16,6 @@ logger = logging.getLogger()
 logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))
 
 DEFAULT_SEED_URLS = [
-    "https://www.ahotu.com/calendar/running/marathon",
     "https://www.runningintheusa.com/classic/list/marathon/upcoming",
     "https://marathons.ahotu.com/calendar/marathon",
     "https://aims-worldrunning.org/calendar.html",
