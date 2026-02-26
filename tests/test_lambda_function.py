@@ -5,6 +5,7 @@ from lambda_function import (
     _is_allowed_source,
     _parse_html_articles,
     _parse_jsonld_articles,
+    _should_visit_link,
 )
 
 
@@ -84,3 +85,13 @@ def test_is_allowed_source_accepts_added_running_news_domains():
     assert _is_allowed_source("https://www.irunfar.com/news/ultra-training-update")
     assert _is_allowed_source("https://www.trailrunnermag.com/category/training/")
     assert _is_allowed_source("https://runningmagazine.ca/the-scene/")
+
+
+def test_runnersworld_links_are_limited_to_news_path():
+    assert _should_visit_link("www.runnersworld.com", "https://www.runnersworld.com/news/a12345/story/")
+    assert not _should_visit_link("www.runnersworld.com", "https://www.runnersworld.com/running/a12345/story/")
+
+
+def test_default_seed_urls_include_only_runnersworld_news():
+    runnersworld_seeds = [u for u in DEFAULT_SEED_URLS if "runnersworld.com" in u]
+    assert runnersworld_seeds == ["https://www.runnersworld.com/news/"]

@@ -17,8 +17,7 @@ logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))
 
 DEFAULT_SEED_URLS = [
     "https://www.letsrun.com/news/",
-    "https://www.runnersworld.com/running/",
-    "https://www.runnersworld.com/training/",
+    "https://www.runnersworld.com/news/",
     "https://www.irunfar.com/news",
     "https://www.trailrunnermag.com/category/training/",
     "https://runningmagazine.ca/the-scene/",
@@ -174,7 +173,11 @@ def _should_visit_link(base_domain: str, href: str) -> bool:
         return False
     if parsed.netloc and parsed.netloc != base_domain:
         return False
+
     lower = href.lower()
+    if "runnersworld.com" in base_domain and "/news" not in parsed.path.lower():
+        return False
+
     return any(token in lower for token in ("news", "article", "running", "training", "/202"))
 
 
