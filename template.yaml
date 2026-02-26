@@ -10,7 +10,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: running-article-crawler
-      Runtime: python3.12
+      Runtime: python3.13
       Handler: lambda_function.lambda_handler
       CodeUri: .
       Timeout: 300

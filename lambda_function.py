@@ -18,6 +18,8 @@ logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))
 DEFAULT_SEED_URLS = [
     "https://www.letsrun.com",
     "https://www.letsrun.com/news",
+    "https://www.runnersword.com",
+    "https://www.runnersword.com/running",
     "https://www.runnersworld.com",
     "https://www.runnersworld.com/running",
 ]

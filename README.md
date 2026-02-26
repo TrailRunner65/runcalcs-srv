@@ -2,11 +2,16 @@
 
 AWS SAM project that deploys a daily Lambda to discover running news/articles, deduplicate them, and persist the merged dataset to S3.
 
+## Requirements
+- Python `3.13.3`
+- AWS SAM CLI
+- AWS credentials configured for deployment
+
 ## What it does
 - Runs once per day at midnight UTC via EventBridge schedule (`cron(0 0 * * ? *)`).
 - Crawls a set of running article pages from:
   - `LetsRun.com`
-  - `runnersworld.com`
+  - `runnersword.com`
 - Extracts article metadata from `application/ld+json` Article markup.
 - Falls back to the page `<title>` and meta description when JSON-LD is unavailable.
 - Captures:
@@ -25,8 +30,7 @@ AWS SAM project that deploys a daily Lambda to discover running news/articles, d
 
 ## Deploy
 ```bash
-sam build
-sam deploy --guided
+sam build && sam deploy --stack-name running-article-crawler --capabilities CAPABILITY_IAM --resolve-s3
 ```
 
 ## Lambda environment variables
