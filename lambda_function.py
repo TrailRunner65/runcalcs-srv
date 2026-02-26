@@ -167,6 +167,21 @@ def _is_allowed_source(url: str) -> bool:
     return any(d in domain for d in allowed_domains)
 
 
+
+
+def _is_allowed_article_url(url: str) -> bool:
+    parsed = urlparse(url)
+    domain = parsed.netloc.lower()
+    path = parsed.path.lower()
+
+    if "runnersworld.com" in domain:
+        return path.startswith("/news/") or path == "/news"
+
+    if "runnersword.com" in domain:
+        return path.startswith("/news/") or path == "/news"
+
+    return _is_allowed_source(url)
+
 def _should_visit_link(base_domain: str, href: str) -> bool:
     parsed = urlparse(href)
     if parsed.scheme and parsed.scheme not in {"http", "https"}:
@@ -209,8 +224,8 @@ def crawl_sources(seed_urls: List[str], max_pages: int = 80, timeout_seconds: in
         if not html:
             continue
 
-        articles.extend(_parse_jsonld_articles(html, url))
-        articles.extend(_parse_html_articles(html, url))
+        parsed_articles = _parse_jsonld_articles(html, url) + _parse_html_articles(html, url)
+        articles.extend([article for article in parsed_articles if _is_allowed_article_url(article.source_url)])
 
         domain = urlparse(url).netloc
         for link in _extract_links(html, url):

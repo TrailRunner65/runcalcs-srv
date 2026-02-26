@@ -2,6 +2,7 @@ from lambda_function import (
     Article,
     DEFAULT_SEED_URLS,
     _dedupe_articles,
+    _is_allowed_article_url,
     _is_allowed_source,
     _parse_html_articles,
     _parse_jsonld_articles,
@@ -95,3 +96,14 @@ def test_runnersworld_links_are_limited_to_news_path():
 def test_default_seed_urls_include_only_runnersworld_news():
     runnersworld_seeds = [u for u in DEFAULT_SEED_URLS if "runnersworld.com" in u]
     assert runnersworld_seeds == ["https://www.runnersworld.com/news/"]
+
+
+def test_runnersworld_article_urls_are_limited_to_news():
+    assert _is_allowed_article_url("https://www.runnersworld.com/news/a12345/story/")
+    assert not _is_allowed_article_url("https://www.runnersworld.com/training/a12345/story/")
+    assert not _is_allowed_article_url("https://www.runnersworld.com/auth/login")
+
+
+def test_non_runnersworld_article_urls_still_allowed_from_other_feeds():
+    assert _is_allowed_article_url("https://www.letsrun.com/news/2025/10/example/")
+    assert _is_allowed_article_url("https://www.irunfar.com/news/ultra-update")

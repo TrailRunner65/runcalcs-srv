@@ -23,6 +23,7 @@ AWS SAM project that deploys a daily Lambda to discover running news/articles, d
 ## Default article/news sources
 - `https://www.letsrun.com/news/`
 - `https://www.runnersworld.com/news/` (Runner's World is restricted to `/news`)
+- Runner's World articles are additionally filtered so stored `source_url` values must stay under `/news` (excluding `/training` and `/auth`).
 - `https://www.irunfar.com/news`
 - `https://www.trailrunnermag.com/category/training/`
 - `https://runningmagazine.ca/the-scene/`
