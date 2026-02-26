@@ -16,12 +16,12 @@ logger = logging.getLogger()
 logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))
 
 DEFAULT_SEED_URLS = [
-    "https://www.letsrun.com",
-    "https://www.letsrun.com/news",
-    "https://www.runnersword.com",
-    "https://www.runnersword.com/running",
-    "https://www.runnersworld.com",
-    "https://www.runnersworld.com/running",
+    "https://www.letsrun.com/news/",
+    "https://www.runnersworld.com/running/",
+    "https://www.runnersworld.com/training/",
+    "https://www.irunfar.com/news",
+    "https://www.trailrunnermag.com/category/training/",
+    "https://runningmagazine.ca/the-scene/",
 ]
 
 
@@ -157,7 +157,15 @@ def _dedupe_articles(articles: Iterable[Article]) -> List[Article]:
 
 def _is_allowed_source(url: str) -> bool:
     domain = urlparse(url).netloc.lower()
-    return any(d in domain for d in ("letsrun.com", "runnersworld.com", "runnersword.com"))
+    allowed_domains = (
+        "letsrun.com",
+        "runnersworld.com",
+        "runnersword.com",
+        "irunfar.com",
+        "trailrunnermag.com",
+        "runningmagazine.ca",
+    )
+    return any(d in domain for d in allowed_domains)
 
 
 def _should_visit_link(base_domain: str, href: str) -> bool:

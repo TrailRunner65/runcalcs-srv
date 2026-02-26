@@ -1,5 +1,6 @@
 from lambda_function import (
     Article,
+    DEFAULT_SEED_URLS,
     _dedupe_articles,
     _is_allowed_source,
     _parse_html_articles,
@@ -72,3 +73,14 @@ def test_is_allowed_source_accepts_requested_domains():
     assert _is_allowed_source("https://www.runnersworld.com/running")
     assert _is_allowed_source("https://runnersword.com")
     assert not _is_allowed_source("https://example.com")
+
+
+def test_default_seed_urls_are_article_or_news_sections():
+    paths = [url.split("/", 3)[-1] if "/" in url[8:] else "" for url in DEFAULT_SEED_URLS]
+    assert all(path.strip("/") for path in paths)
+
+
+def test_is_allowed_source_accepts_added_running_news_domains():
+    assert _is_allowed_source("https://www.irunfar.com/news/ultra-training-update")
+    assert _is_allowed_source("https://www.trailrunnermag.com/category/training/")
+    assert _is_allowed_source("https://runningmagazine.ca/the-scene/")

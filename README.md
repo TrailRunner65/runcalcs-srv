@@ -9,9 +9,7 @@ AWS SAM project that deploys a daily Lambda to discover running news/articles, d
 
 ## What it does
 - Runs once per day at midnight UTC via EventBridge schedule (`cron(0 0 * * ? *)`).
-- Crawls a set of running article pages from:
-  - `LetsRun.com`
-  - `runnersword.com`
+- Crawls running **article/news section pages** (not main site homepages).
 - Extracts article metadata from `application/ld+json` Article markup.
 - Falls back to the page `<title>` and meta description when JSON-LD is unavailable.
 - Captures:
@@ -21,6 +19,16 @@ AWS SAM project that deploys a daily Lambda to discover running news/articles, d
 - Merges with previously stored data in S3.
 - Deduplicates articles by normalized `title + source_url`.
 - Writes refreshed JSON file back to S3.
+
+## Default article/news sources
+- `https://www.letsrun.com/news/`
+- `https://www.runnersworld.com/running/`
+- `https://www.runnersworld.com/training/`
+- `https://www.irunfar.com/news`
+- `https://www.trailrunnermag.com/category/training/`
+- `https://runningmagazine.ca/the-scene/`
+
+> Tip: keep `SEED_URLS` focused on section/category/article listing pages rather than domain root homepages.
 
 ## Files
 - `lambda_function.py` - Lambda implementation.
