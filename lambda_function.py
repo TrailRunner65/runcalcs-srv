@@ -4,7 +4,7 @@ import os
 import re
 from collections import deque
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from html import unescape
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from urllib.error import HTTPError, URLError
@@ -16,62 +16,21 @@ logger = logging.getLogger()
 logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))
 
 DEFAULT_SEED_URLS = [
-    "https://www.runningintheusa.com/classic/list/marathon/upcoming",
-    "https://marathons.ahotu.com/calendar/marathon",
-    "https://aims-worldrunning.org/calendar.html",
-    "https://www.worldmarathonmajors.com",
+    "https://www.letsrun.com",
+    "https://www.letsrun.com/news",
+    "https://www.runnersworld.com",
+    "https://www.runnersworld.com/running",
 ]
 
 
 @dataclass
-class Race:
-    name: str
-    date: str
-    location: str
-    description: str
-    entry_requirements: str
+class Article:
+    title: str
+    summary: str
     source_url: str
 
     def to_dict(self) -> Dict[str, str]:
         return self.__dict__.copy()
-
-
-def _extract_location(location_obj: Any) -> str:
-    if isinstance(location_obj, str):
-        return location_obj.strip()
-    if not isinstance(location_obj, dict):
-        return "Unknown"
-
-    address = location_obj.get("address", {})
-    parts = [location_obj.get("name")]
-    if isinstance(address, str):
-        parts.append(address)
-    elif isinstance(address, dict):
-        parts.extend(
-            [
-                address.get("addressLocality"),
-                address.get("addressRegion"),
-                address.get("addressCountry"),
-            ]
-        )
-    cleaned = [p.strip() for p in parts if isinstance(p, str) and p.strip()]
-    return ", ".join(cleaned) if cleaned else "Unknown"
-
-
-def _extract_entry_requirements(text: str) -> str:
-    if not text:
-        return "Not specified"
-    lowered = text.lower()
-    checks = {
-        "lottery": r"\blottery\b",
-        "qualification standard": r"\bqualif(?:y|ication|ier)\b",
-        "membership required": r"\bmember(ship)? required\b",
-        "minimum age": r"\b(minimum|min) age\b",
-        "entry fee": r"\b(entry fee|registration fee|cost)\b",
-        "medical certificate": r"\bmedical certificate\b",
-    }
-    labels = [label for label, pattern in checks.items() if re.search(pattern, lowered)]
-    return ", ".join(labels) if labels else "Not specified"
 
 
 def _walk_jsonld(payload: Any) -> Iterable[Any]:
@@ -84,24 +43,12 @@ def _walk_jsonld(payload: Any) -> Iterable[Any]:
         yield payload
 
 
-def _is_event(item: Dict[str, Any]) -> bool:
+def _is_article(item: Dict[str, Any]) -> bool:
     value = item.get("@type")
+    article_types = {"Article", "NewsArticle", "BlogPosting", "Report"}
     if isinstance(value, list):
-        return any(v in {"Event", "SportsEvent"} for v in value)
-    return value in {"Event", "SportsEvent"}
-
-
-def _normalize_date(raw: Any) -> Optional[str]:
-    if not isinstance(raw, str) or not raw.strip():
-        return None
-    value = raw.strip().replace("Z", "+00:00")
-    try:
-        if len(value) == 10:
-            return date.fromisoformat(value).isoformat()
-        return datetime.fromisoformat(value).date().isoformat()
-    except ValueError:
-        match = re.match(r"^(\d{4}-\d{2}-\d{2})", value)
-        return match.group(1) if match else None
+        return any(v in article_types for v in value)
+    return value in article_types
 
 
 def _extract_jsonld_blobs(html: str) -> List[str]:
@@ -119,59 +66,42 @@ def _extract_links(html: str, page_url: str) -> List[str]:
     return links
 
 
-def _extract_json_string_value(payload: str, key: str) -> Optional[str]:
-    pattern = rf'"{re.escape(key)}"\s*:\s*"((?:\\\\.|[^"\\\\])*)"'
-    match = re.search(pattern, payload)
-    if not match:
-        return None
-    try:
-        return json.loads(f'"{match.group(1)}"')
-    except json.JSONDecodeError:
-        return match.group(1)
+def _clean_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    collapsed = re.sub(r"\s+", " ", value).strip()
+    return collapsed
 
 
-def _parse_world_marathon_majors(doc: str, page_url: str) -> List[Race]:
-    if "worldmarathonmajors.com" not in urlparse(page_url).netloc:
-        return []
-
-    races: List[Race] = []
-    blocks = re.findall(r"\{[^{}]{0,1000}date_start[^{}]{0,1000}\}", doc, re.IGNORECASE | re.DOTALL)
-    for block in blocks:
-        name = (
-            _extract_json_string_value(block, "name")
-            or _extract_json_string_value(block, "title")
-            or _extract_json_string_value(block, "race_name")
-        )
-        if not name or "marathon" not in name.lower():
-            continue
-
-        date_start = _extract_json_string_value(block, "date_start")
-        start_date = _normalize_date(date_start)
-        if not start_date:
-            continue
-
-        city = _extract_json_string_value(block, "city")
-        country = _extract_json_string_value(block, "country")
-        location_parts = [part for part in (city, country) if part]
-        location = ", ".join(location_parts) if location_parts else "Unknown"
-        source_url = _extract_json_string_value(block, "url") or page_url
-
-        races.append(
-            Race(
-                name=name,
-                date=start_date,
-                location=location,
-                description="World Marathon Majors listing",
-                entry_requirements="Not specified",
-                source_url=source_url,
-            )
-        )
-
-    return races
+def _to_summary(value: str, max_len: int = 220) -> str:
+    cleaned = _clean_text(value)
+    if len(cleaned) <= max_len:
+        return cleaned
+    return cleaned[: max_len - 1].rstrip() + "…"
 
 
-def _parse_jsonld(doc: str, page_url: str) -> List[Race]:
-    races: List[Race] = []
+def _first_non_empty(values: Iterable[Any]) -> str:
+    for value in values:
+        cleaned = _clean_text(value)
+        if cleaned:
+            return cleaned
+    return ""
+
+
+def _extract_url(item: Dict[str, Any], page_url: str) -> str:
+    raw = item.get("url")
+    if isinstance(raw, str) and raw.strip():
+        return urljoin(page_url, raw.strip())
+    main = item.get("mainEntityOfPage")
+    if isinstance(main, dict):
+        main_id = main.get("@id")
+        if isinstance(main_id, str) and main_id.strip():
+            return urljoin(page_url, main_id.strip())
+    return page_url
+
+
+def _parse_jsonld_articles(doc: str, page_url: str) -> List[Article]:
+    articles: List[Article] = []
     for blob in _extract_jsonld_blobs(doc):
         try:
             data = json.loads(blob)
@@ -179,44 +109,53 @@ def _parse_jsonld(doc: str, page_url: str) -> List[Race]:
             continue
 
         for item in _walk_jsonld(data):
-            if not isinstance(item, dict) or not _is_event(item):
+            if not isinstance(item, dict) or not _is_article(item):
                 continue
-            name = str(item.get("name") or "").strip()
-            if not name or "marathon" not in name.lower():
+
+            title = _first_non_empty([item.get("headline"), item.get("name")])
+            summary = _first_non_empty([item.get("description"), item.get("articleBody")])
+            if not title:
                 continue
-            start_date = _normalize_date(item.get("startDate"))
-            if not start_date:
-                continue
-            description = str(item.get("description") or "").strip()
-            races.append(
-                Race(
-                    name=name,
-                    date=start_date,
-                    location=_extract_location(item.get("location")),
-                    description=description,
-                    entry_requirements=_extract_entry_requirements(description),
-                    source_url=str(item.get("url") or page_url),
-                )
-            )
-    return races
+
+            source_url = _extract_url(item, page_url)
+            articles.append(Article(title=title, summary=_to_summary(summary), source_url=source_url))
+    return articles
 
 
-def _race_key(race: Race) -> Tuple[str, str, str]:
+def _parse_html_articles(doc: str, page_url: str) -> List[Article]:
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", doc, re.IGNORECASE | re.DOTALL)
+    meta_description_match = re.search(
+        r'<meta[^>]+name=["\']description["\'][^>]+content=["\'](.*?)["\']',
+        doc,
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    title = _clean_text(unescape(title_match.group(1))) if title_match else ""
+    summary = _clean_text(unescape(meta_description_match.group(1))) if meta_description_match else ""
+
+    if not title:
+        return []
+
+    return [Article(title=title, summary=_to_summary(summary), source_url=page_url)]
+
+
+def _article_key(article: Article) -> Tuple[str, str]:
     norm = lambda x: re.sub(r"\s+", " ", x.lower()).strip()
-    return norm(race.name), race.date, norm(race.location)
+    return norm(article.title), article.source_url.strip().lower()
 
 
-def _dedupe_and_filter(races: Iterable[Race], today: date) -> List[Race]:
-    unique: Dict[Tuple[str, str, str], Race] = {}
-    for race in races:
-        try:
-            race_day = date.fromisoformat(race.date)
-        except ValueError:
+def _dedupe_articles(articles: Iterable[Article]) -> List[Article]:
+    unique: Dict[Tuple[str, str], Article] = {}
+    for article in articles:
+        if not article.title or not article.source_url:
             continue
-        if race_day < today:
-            continue
-        unique.setdefault(_race_key(race), race)
-    return sorted(unique.values(), key=lambda r: (r.date, r.name.lower()))
+        unique.setdefault(_article_key(article), article)
+    return sorted(unique.values(), key=lambda a: a.title.lower())
+
+
+def _is_allowed_source(url: str) -> bool:
+    domain = urlparse(url).netloc.lower()
+    return any(d in domain for d in ("letsrun.com", "runnersworld.com", "runnersword.com"))
 
 
 def _should_visit_link(base_domain: str, href: str) -> bool:
@@ -226,11 +165,11 @@ def _should_visit_link(base_domain: str, href: str) -> bool:
     if parsed.netloc and parsed.netloc != base_domain:
         return False
     lower = href.lower()
-    return any(token in lower for token in ("marathon", "race", "calendar"))
+    return any(token in lower for token in ("news", "article", "running", "training", "/202"))
 
 
 def _fetch_url(url: str, timeout_seconds: int) -> Optional[str]:
-    request = Request(url, headers={"User-Agent": "marathon-race-crawler/1.0"})
+    request = Request(url, headers={"User-Agent": "running-article-crawler/1.0"})
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
             content_type = response.headers.get("Content-Type", "")
@@ -242,14 +181,14 @@ def _fetch_url(url: str, timeout_seconds: int) -> Optional[str]:
         return None
 
 
-def crawl_sources(seed_urls: List[str], max_pages: int = 80, timeout_seconds: int = 15) -> List[Race]:
+def crawl_sources(seed_urls: List[str], max_pages: int = 80, timeout_seconds: int = 15) -> List[Article]:
     queue: deque[str] = deque(seed_urls)
     visited: Set[str] = set()
-    races: List[Race] = []
+    articles: List[Article] = []
 
     while queue and len(visited) < max_pages:
         url = queue.popleft()
-        if url in visited:
+        if url in visited or not _is_allowed_source(url):
             continue
         visited.add(url)
 
@@ -257,18 +196,18 @@ def crawl_sources(seed_urls: List[str], max_pages: int = 80, timeout_seconds: in
         if not html:
             continue
 
-        races.extend(_parse_jsonld(html, url))
-        races.extend(_parse_world_marathon_majors(html, url))
+        articles.extend(_parse_jsonld_articles(html, url))
+        articles.extend(_parse_html_articles(html, url))
 
         domain = urlparse(url).netloc
         for link in _extract_links(html, url):
-            if link not in visited and _should_visit_link(domain, link):
+            if link not in visited and _is_allowed_source(link) and _should_visit_link(domain, link):
                 queue.append(link)
 
-    return races
+    return articles
 
 
-def load_existing_races(s3_client: Any, bucket: str, key: str) -> List[Race]:
+def load_existing_articles(s3_client: Any, bucket: str, key: str) -> List[Article]:
     try:
         obj = s3_client.get_object(Bucket=bucket, Key=key)
     except Exception as exc:
@@ -277,14 +216,14 @@ def load_existing_races(s3_client: Any, bucket: str, key: str) -> List[Race]:
             return []
         raise
     payload = json.loads(obj["Body"].read().decode("utf-8"))
-    return [Race(**item) for item in payload.get("races", []) if isinstance(item, dict)]
+    return [Article(**item) for item in payload.get("articles", []) if isinstance(item, dict)]
 
 
-def store_races(s3_client: Any, bucket: str, key: str, races: List[Race]) -> None:
+def store_articles(s3_client: Any, bucket: str, key: str, articles: List[Article]) -> None:
     body = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "count": len(races),
-        "races": [r.to_dict() for r in races],
+        "count": len(articles),
+        "articles": [a.to_dict() for a in articles],
     }
     s3_client.put_object(
         Bucket=bucket,
@@ -298,23 +237,23 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     import boto3
 
     bucket = os.environ["RACES_BUCKET"]
-    key = os.getenv("RACES_KEY", "races/marathons.json")
+    key = os.getenv("RACES_KEY", "running/articles.json")
     max_pages = int(os.getenv("MAX_PAGES", "80"))
     seed_urls = [
         u.strip() for u in os.getenv("SEED_URLS", ",".join(DEFAULT_SEED_URLS)).split(",") if u.strip()
     ]
 
     s3_client = boto3.client("s3")
-    existing = load_existing_races(s3_client, bucket, key)
+    existing = load_existing_articles(s3_client, bucket, key)
     discovered = crawl_sources(seed_urls=seed_urls, max_pages=max_pages)
-    filtered = _dedupe_and_filter(existing + discovered, today=datetime.now(timezone.utc).date())
-    store_races(s3_client, bucket, key, filtered)
+    merged = _dedupe_articles(existing + discovered)
+    store_articles(s3_client, bucket, key, merged)
 
     return {
         "statusCode": 200,
         "body": json.dumps(
             {
-                "stored": len(filtered),
+                "stored": len(merged),
                 "discovered": len(discovered),
                 "existing": len(existing),
                 "bucket": bucket,

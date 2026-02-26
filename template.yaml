@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Daily marathon race crawler lambda
+Description: Daily running article crawler lambda
 
 Resources:
   MarathonRacesBucket:
@@ -9,7 +9,7 @@ Resources:
   MarathonRaceCrawlerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: marathon-race-crawler
+      FunctionName: running-article-crawler
       Runtime: python3.12
       Handler: lambda_function.lambda_handler
       CodeUri: .
@@ -21,7 +21,7 @@ Resources:
       Environment:
         Variables:
           RACES_BUCKET: !Ref MarathonRacesBucket
-          RACES_KEY: races/marathons.json
+          RACES_KEY: running/articles.json
           MAX_PAGES: 80
       Events:
         DailyMidnightSchedule:

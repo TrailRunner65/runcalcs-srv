@@ -1,103 +1,74 @@
-from datetime import date
-
 from lambda_function import (
-    Race,
-    _dedupe_and_filter,
-    _extract_entry_requirements,
-    _parse_jsonld,
-    _parse_world_marathon_majors,
+    Article,
+    _dedupe_articles,
+    _is_allowed_source,
+    _parse_html_articles,
+    _parse_jsonld_articles,
 )
 
 
-def test_parse_jsonld_extracts_marathon_event():
+def test_parse_jsonld_extracts_running_article():
     html = '''
     <html><head>
       <script type="application/ld+json">
       {
         "@context": "https://schema.org",
-        "@type": "Event",
-        "name": "City Spring Marathon",
-        "startDate": "2030-04-12",
-        "description": "Lottery entry with registration fee applies",
-        "location": {
-          "@type": "Place",
-          "name": "Main Square",
-          "address": {
-            "addressLocality": "Portland",
-            "addressRegion": "OR",
-            "addressCountry": "US"
-          }
-        }
+        "@type": "NewsArticle",
+        "headline": "How to Improve Your 10K Time",
+        "description": "Start with consistent weekly mileage and structured intervals.",
+        "url": "https://www.letsrun.com/news/2029/10/how-to-improve-10k-time"
       }
       </script>
     </head></html>
     '''
 
-    races = _parse_jsonld(html, "https://example.com")
+    articles = _parse_jsonld_articles(html, "https://www.letsrun.com/news")
 
-    assert len(races) == 1
-    assert races[0].name == "City Spring Marathon"
-    assert races[0].date == "2030-04-12"
-    assert "lottery" in races[0].entry_requirements
+    assert len(articles) == 1
+    assert articles[0].title == "How to Improve Your 10K Time"
+    assert articles[0].summary.startswith("Start with consistent weekly mileage")
+    assert articles[0].source_url.endswith("how-to-improve-10k-time")
 
 
-def test_dedupe_and_filter_removes_duplicates_and_past_dates():
-    races = [
-        Race(
-            name="City Marathon",
-            date="2020-01-01",
-            location="Boston, US",
-            description="Old race",
-            entry_requirements="Not specified",
-            source_url="https://a.example",
+def test_dedupe_articles_by_title_and_source_url():
+    articles = [
+        Article(
+            title="Race Day Nutrition Guide",
+            summary="A",
+            source_url="https://www.runnersworld.com/running/a12345/race-day-nutrition-guide/",
         ),
-        Race(
-            name="City Marathon",
-            date="2030-01-01",
-            location="Boston, US",
-            description="Upcoming race",
-            entry_requirements="Not specified",
-            source_url="https://a.example",
-        ),
-        Race(
-            name=" City  Marathon ",
-            date="2030-01-01",
-            location=" Boston, US ",
-            description="Duplicate upcoming race",
-            entry_requirements="Not specified",
-            source_url="https://b.example",
+        Article(
+            title=" Race Day   Nutrition Guide ",
+            summary="B",
+            source_url="https://www.runnersworld.com/running/a12345/race-day-nutrition-guide/",
         ),
     ]
 
-    filtered = _dedupe_and_filter(races, today=date(2024, 1, 1))
+    filtered = _dedupe_articles(articles)
 
     assert len(filtered) == 1
-    assert filtered[0].date == "2030-01-01"
+    assert filtered[0].title == "Race Day Nutrition Guide"
 
 
-def test_extract_entry_requirements():
-    text = "Participants must meet a qualification time and pay an entry fee."
-    requirements = _extract_entry_requirements(text)
+def test_parse_html_fallback_from_title_and_meta_description():
+    html = '''
+    <html>
+      <head>
+        <title>Best Recovery Runs for Marathoners</title>
+        <meta name="description" content="Easy efforts done consistently can speed recovery." />
+      </head>
+    </html>
+    '''
 
-    assert "qualification standard" in requirements
-    assert "entry fee" in requirements
+    articles = _parse_html_articles(html, "https://www.runnersworld.com/running/a1111/recovery-runs")
+
+    assert len(articles) == 1
+    assert articles[0].title == "Best Recovery Runs for Marathoners"
+    assert "speed recovery" in articles[0].summary
 
 
-def test_parse_world_marathon_majors_extracts_location_fields():
-    html = """
-    <script>
-    window.__data = {
-      "name": "Example City Marathon",
-      "date_start": "2031-09-14",
-      "city": "Example City",
-      "country": "Exampleland",
-      "url": "https://www.worldmarathonmajors.com/example"
-    };
-    </script>
-    """
-
-    races = _parse_world_marathon_majors(html, "https://www.worldmarathonmajors.com")
-
-    assert len(races) == 1
-    assert races[0].date == "2031-09-14"
-    assert races[0].location == "Example City, Exampleland"
+def test_is_allowed_source_accepts_requested_domains():
+    assert _is_allowed_source("https://www.letsrun.com/news")
+    assert _is_allowed_source("https://www.runnersworld.com/running")
+    assert _is_allowed_source("https://runnersword.com")
+    assert not _is_allowed_source("https://example.com")
