@@ -99,6 +99,7 @@ def test_configure_bucket_cors_sets_expected_origins():
 
     rule = fake_s3.cors["CORSConfiguration"]["CORSRules"][0]
     assert rule["AllowedOrigins"] == ALLOWED_ORIGINS
+    assert rule["AllowedMethods"] == ["GET", "HEAD", "OPTIONS"]
 
 
 

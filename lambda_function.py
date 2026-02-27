@@ -168,7 +168,7 @@ def _configure_bucket_cors(s3_client: Any, bucket: str) -> None:
         CORSConfiguration={
             "CORSRules": [
                 {
-                    "AllowedMethods": ["GET"],
+                    "AllowedMethods": ["GET", "HEAD", "OPTIONS"],
                     "AllowedOrigins": ALLOWED_ORIGINS,
                     "AllowedHeaders": ["*"],
                     "MaxAgeSeconds": 3600,
@@ -228,6 +228,7 @@ def lambda_handler(event: Optional[Dict[str, Any]], context: Any) -> Dict[str, A
     key = _build_dated_key(key_prefix, run_at)
     _store_tip(s3_client, bucket, key, tip)
     object_url = _build_s3_object_url(bucket, key, region_name)
+    logger.info("Use regional S3 URL for browser access to avoid redirect CORS issues: %s", object_url)
 
     return {
         "statusCode": 200,

@@ -33,6 +33,7 @@ AWS SAM project that deploys a daily Lambda to request a running tip of the day 
 - Applies bucket policy/public access settings so tip JSON files can be fetched directly by the frontend from S3.
 - Stores each run to a new dated JSON object in S3 (`<prefix>-YYYY-MM-DD.json`).
 - Returns an `object_url` in the Lambda response using the **regional S3 endpoint** (for example `https://running-tip-of-day.s3.ap-southeast-2.amazonaws.com/...`) to avoid global-endpoint redirect CORS issues.
+- Do not use `https://running-tip-of-day.s3.amazonaws.com/...` from browser code; use the returned regional `object_url` instead.
 
 ## Files
 - `lambda_function.py` - Lambda implementation.
