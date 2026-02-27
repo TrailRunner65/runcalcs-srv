@@ -12,7 +12,6 @@ Resources:
           - AllowedMethods:
               - GET
               - HEAD
-              - OPTIONS
             AllowedOrigins:
               - https://runcalcs.com
               - https://www.runcalcs.com

@@ -168,7 +168,7 @@ def _configure_bucket_cors(s3_client: Any, bucket: str) -> None:
         CORSConfiguration={
             "CORSRules": [
                 {
-                    "AllowedMethods": ["GET", "HEAD", "OPTIONS"],
+                    "AllowedMethods": ["GET", "HEAD"],
                     "AllowedOrigins": ALLOWED_ORIGINS,
                     "AllowedHeaders": ["*"],
                     "MaxAgeSeconds": 3600,
