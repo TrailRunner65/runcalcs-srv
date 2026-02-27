@@ -5,6 +5,8 @@ Description: Daily running tip generator Lambda using OpenAI
 Resources:
   RunningTipsBucket:
     Type: AWS::S3::Bucket
+    Properties:
+      BucketName: running-tip-of-day
 
   RunningTipOfDayFunction:
     Type: AWS::Serverless::Function
