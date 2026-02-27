@@ -8,6 +8,7 @@ from lambda_function import (
     TIP_CATEGORIES,
     RunningTip,
     _build_dated_key,
+    _build_s3_object_url,
     _choose_category,
     _configure_bucket_cors,
     _ensure_bucket,
@@ -100,6 +101,12 @@ def test_configure_bucket_cors_sets_expected_origins():
     assert rule["AllowedOrigins"] == ALLOWED_ORIGINS
 
 
+
+
+def test_build_s3_object_url_uses_regional_endpoint():
+    url = _build_s3_object_url("running-tip-of-day", "running-tips/tip-2026-02-27.json", "ap-southeast-2")
+    assert url == "https://running-tip-of-day.s3.ap-southeast-2.amazonaws.com/running-tips/tip-2026-02-27.json"
+
 def test_build_dated_key_has_date_suffix():
     key = _build_dated_key("running-tips/tip", datetime(2026, 2, 27, tzinfo=timezone.utc))
     assert key == "running-tips/tip-2026-02-27.json"
@@ -149,6 +156,7 @@ def test_lambda_handler_generates_and_stores_tip(monkeypatch):
     assert body["bucket"] == "tips-bucket"
     assert body["key"] == "running-tips/tip-2026-02-27.json"
     assert body["category"] == "rest"
+    assert body["object_url"] == "https://tips-bucket.s3.ap-southeast-2.amazonaws.com/running-tips/tip-2026-02-27.json"
 
     stored_payload = json.loads(fake_s3.put_calls[0]["Body"].decode("utf-8"))
     assert stored_payload == RunningTip(

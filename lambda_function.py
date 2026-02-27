@@ -183,6 +183,11 @@ def _build_dated_key(key_prefix: str, run_at: datetime) -> str:
     return f"{cleaned}-{run_at.strftime('%Y-%m-%d')}.json"
 
 
+def _build_s3_object_url(bucket: str, key: str, region_name: str) -> str:
+    if region_name == "us-east-1":
+        return f"https://{bucket}.s3.amazonaws.com/{key}"
+    return f"https://{bucket}.s3.{region_name}.amazonaws.com/{key}"
+
 def _store_tip(s3_client: Any, bucket: str, key: str, tip: RunningTip) -> None:
     s3_client.put_object(
         Bucket=bucket,
@@ -222,6 +227,7 @@ def lambda_handler(event: Optional[Dict[str, Any]], context: Any) -> Dict[str, A
     _configure_bucket_cors(s3_client, bucket)
     key = _build_dated_key(key_prefix, run_at)
     _store_tip(s3_client, bucket, key, tip)
+    object_url = _build_s3_object_url(bucket, key, region_name)
 
     return {
         "statusCode": 200,
@@ -231,6 +237,7 @@ def lambda_handler(event: Optional[Dict[str, Any]], context: Any) -> Dict[str, A
                 "key": key,
                 "category": category,
                 "model": model,
+                "object_url": object_url,
             }
         ),
     }
