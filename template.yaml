@@ -1,28 +1,34 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Daily running article crawler lambda
+Description: Daily running tip generator Lambda using OpenAI
 
 Resources:
-  MarathonRacesBucket:
+  RunningTipsBucket:
     Type: AWS::S3::Bucket
 
-  MarathonRaceCrawlerFunction:
+  RunningTipOfDayFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: running-article-crawler
+      FunctionName: running-tip-of-day
       Runtime: python3.13
       Handler: lambda_function.lambda_handler
       CodeUri: .
-      Timeout: 300
+      Timeout: 60
       MemorySize: 512
       Policies:
         - S3CrudPolicy:
-            BucketName: !Ref MarathonRacesBucket
+            BucketName: !Ref RunningTipsBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: "*"
       Environment:
         Variables:
-          RACES_BUCKET: !Ref MarathonRacesBucket
-          RACES_KEY_PREFIX: running/articles
-          MAX_PAGES: 80
+          TIPS_BUCKET: !Ref RunningTipsBucket
+          TIPS_KEY_PREFIX: running-tips/tip
+          OPENAI_SECRET_NAME: ChatGPTKey
+          OPENAI_MODEL: gpt-4o-mini
       Events:
         DailyMidnightSchedule:
           Type: Schedule
@@ -31,7 +37,7 @@ Resources:
             Enabled: true
 
 Outputs:
-  MarathonRacesBucketName:
-    Value: !Ref MarathonRacesBucket
-  MarathonCrawlerFunctionName:
-    Value: !Ref MarathonRaceCrawlerFunction
+  RunningTipsBucketName:
+    Value: !Ref RunningTipsBucket
+  RunningTipLambdaName:
+    Value: !Ref RunningTipOfDayFunction

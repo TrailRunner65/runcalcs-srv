@@ -1,298 +1,209 @@
 import json
 import logging
 import os
-import re
-from collections import deque
+import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from html import unescape
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Optional
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
 
 logger = logging.getLogger()
 logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))
 
-DEFAULT_SEED_URLS = [
-    "https://www.letsrun.com/news/",
-    "https://www.runnersworld.com/news/",
-    "https://www.irunfar.com/news",
-    "https://www.trailrunnermag.com/category/training/",
-    "https://runningmagazine.ca/the-scene/",
+TIP_CATEGORIES = [
+    "running equipment",
+    "health",
+    "training",
+    "rest",
+    "recovery from injury",
+    "nutrition",
+    "mental wellbeing",
+    "weight loss",
+    "racing",
+    "club running",
+    "Parkruns",
+]
+
+ALLOWED_ORIGINS = [
+    "https://runcalcs.com",
+    "https://www.runcalcs.com",
+    "https://develop.d39l2wzc9rmkuy.amplifyapp.com",
 ]
 
 
 @dataclass
-class Article:
-    title: str
-    summary: str
-    source_url: str
+class RunningTip:
+    category: str
+    tip: str
+    model: str
+    generated_at: str
 
     def to_dict(self) -> Dict[str, str]:
-        return self.__dict__.copy()
+        return {
+            "category": self.category,
+            "tip": self.tip,
+            "model": self.model,
+            "generated_at": self.generated_at,
+        }
 
 
-def _walk_jsonld(payload: Any) -> Iterable[Any]:
-    if isinstance(payload, list):
-        for item in payload:
-            yield from _walk_jsonld(item)
-    elif isinstance(payload, dict):
-        if "@graph" in payload:
-            yield from _walk_jsonld(payload["@graph"])
-        yield payload
+def _load_openai_key(secrets_client: Any, secret_name: str, region_name: str) -> str:
+    response = secrets_client.get_secret_value(SecretId=secret_name)
+    secret_string = response.get("SecretString", "")
+    if not secret_string:
+        raise ValueError(f"Secret '{secret_name}' is empty")
+
+    try:
+        parsed = json.loads(secret_string)
+    except json.JSONDecodeError:
+        return secret_string.strip()
+
+    for key_name in ("OPENAI_API_KEY", "openai_api_key", "api_key", "key"):
+        value = parsed.get(key_name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    raise ValueError(f"Secret '{secret_name}' JSON does not contain an OpenAI API key")
 
 
-def _is_article(item: Dict[str, Any]) -> bool:
-    value = item.get("@type")
-    article_types = {"Article", "NewsArticle", "BlogPosting", "Report"}
-    if isinstance(value, list):
-        return any(v in article_types for v in value)
-    return value in article_types
+def _choose_category(event: Dict[str, Any]) -> str:
+    requested = event.get("category")
+    if isinstance(requested, str) and requested in TIP_CATEGORIES:
+        return requested
+    return random.choice(TIP_CATEGORIES)
 
 
-def _extract_jsonld_blobs(html: str) -> List[str]:
-    pattern = re.compile(
-        r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
-        re.IGNORECASE | re.DOTALL,
-    )
-    return [unescape(blob.strip()) for blob in pattern.findall(html)]
-
-
-def _extract_links(html: str, page_url: str) -> List[str]:
-    links = []
-    for match in re.findall(r'<a[^>]+href=["\']([^"\']+)["\']', html, re.IGNORECASE):
-        links.append(urljoin(page_url, unescape(match)).split("#", 1)[0])
-    return links
-
-
-def _clean_text(value: Any) -> str:
-    if not isinstance(value, str):
-        return ""
-    collapsed = re.sub(r"\s+", " ", value).strip()
-    return collapsed
-
-
-def _to_summary(value: str, max_len: int = 220) -> str:
-    cleaned = _clean_text(value)
-    if len(cleaned) <= max_len:
-        return cleaned
-    return cleaned[: max_len - 1].rstrip() + "…"
-
-
-def _first_non_empty(values: Iterable[Any]) -> str:
-    for value in values:
-        cleaned = _clean_text(value)
-        if cleaned:
-            return cleaned
-    return ""
-
-
-def _extract_url(item: Dict[str, Any], page_url: str) -> str:
-    raw = item.get("url")
-    if isinstance(raw, str) and raw.strip():
-        return urljoin(page_url, raw.strip())
-    main = item.get("mainEntityOfPage")
-    if isinstance(main, dict):
-        main_id = main.get("@id")
-        if isinstance(main_id, str) and main_id.strip():
-            return urljoin(page_url, main_id.strip())
-    return page_url
-
-
-def _parse_jsonld_articles(doc: str, page_url: str) -> List[Article]:
-    articles: List[Article] = []
-    for blob in _extract_jsonld_blobs(doc):
-        try:
-            data = json.loads(blob)
-        except json.JSONDecodeError:
-            continue
-
-        for item in _walk_jsonld(data):
-            if not isinstance(item, dict) or not _is_article(item):
-                continue
-
-            title = _first_non_empty([item.get("headline"), item.get("name")])
-            summary = _first_non_empty([item.get("description"), item.get("articleBody")])
-            if not title:
-                continue
-
-            source_url = _extract_url(item, page_url)
-            articles.append(Article(title=title, summary=_to_summary(summary), source_url=source_url))
-    return articles
-
-
-def _parse_html_articles(doc: str, page_url: str) -> List[Article]:
-    title_match = re.search(r"<title[^>]*>(.*?)</title>", doc, re.IGNORECASE | re.DOTALL)
-    meta_description_match = re.search(
-        r'<meta[^>]+name=["\']description["\'][^>]+content=["\'](.*?)["\']',
-        doc,
-        re.IGNORECASE | re.DOTALL,
+def _request_openai_tip(api_key: str, category: str, model: str, timeout_seconds: int) -> str:
+    prompt = (
+        "You are a practical running coach. "
+        f"Provide one concise tip of the day for the category '{category}'. "
+        "Keep it to 1-2 sentences and make it actionable."
     )
 
-    title = _clean_text(unescape(title_match.group(1))) if title_match else ""
-    summary = _clean_text(unescape(meta_description_match.group(1))) if meta_description_match else ""
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You provide safe, clear running advice."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.7,
+    }
 
-    if not title:
-        return []
-
-    return [Article(title=title, summary=_to_summary(summary), source_url=page_url)]
-
-
-def _article_key(article: Article) -> Tuple[str, str]:
-    norm = lambda x: re.sub(r"\s+", " ", x.lower()).strip()
-    return norm(article.title), article.source_url.strip().lower()
-
-
-def _dedupe_articles(articles: Iterable[Article]) -> List[Article]:
-    unique: Dict[Tuple[str, str], Article] = {}
-    for article in articles:
-        if not article.title or not article.source_url:
-            continue
-        unique.setdefault(_article_key(article), article)
-    return sorted(unique.values(), key=lambda a: a.title.lower())
-
-
-def _is_allowed_source(url: str) -> bool:
-    domain = urlparse(url).netloc.lower()
-    allowed_domains = (
-        "letsrun.com",
-        "runnersworld.com",
-        "runnersword.com",
-        "irunfar.com",
-        "trailrunnermag.com",
-        "runningmagazine.ca",
+    request = Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
     )
-    return any(d in domain for d in allowed_domains)
 
-
-
-
-def _is_allowed_article_url(url: str) -> bool:
-    parsed = urlparse(url)
-    domain = parsed.netloc.lower()
-    path = parsed.path.lower()
-
-    if "runnersworld.com" in domain:
-        return path.startswith("/news/") or path == "/news"
-
-    if "runnersword.com" in domain:
-        return path.startswith("/news/") or path == "/news"
-
-    return _is_allowed_source(url)
-
-def _should_visit_link(base_domain: str, href: str) -> bool:
-    parsed = urlparse(href)
-    if parsed.scheme and parsed.scheme not in {"http", "https"}:
-        return False
-    if parsed.netloc and parsed.netloc != base_domain:
-        return False
-
-    lower = href.lower()
-    if "runnersworld.com" in base_domain and "/news" not in parsed.path.lower():
-        return False
-
-    return any(token in lower for token in ("news", "article", "running", "training", "/202"))
-
-
-def _fetch_url(url: str, timeout_seconds: int) -> Optional[str]:
-    request = Request(url, headers={"User-Agent": "running-article-crawler/1.0"})
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
-            content_type = response.headers.get("Content-Type", "")
-            if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
-                return None
-            return response.read().decode("utf-8", errors="ignore")
+            body = json.loads(response.read().decode("utf-8"))
     except (HTTPError, URLError, TimeoutError) as exc:
-        logger.warning("Failed fetching %s: %s", url, exc)
-        return None
+        logger.error("OpenAI request failed: %s", exc)
+        raise
+
+    choices = body.get("choices", [])
+    if not choices:
+        raise ValueError("OpenAI response contained no choices")
+
+    message = choices[0].get("message", {})
+    content = message.get("content", "")
+    tip = content.strip()
+    if not tip:
+        raise ValueError("OpenAI response did not contain tip text")
+
+    return tip
 
 
-def crawl_sources(seed_urls: List[str], max_pages: int = 80, timeout_seconds: int = 15) -> List[Article]:
-    queue: deque[str] = deque(seed_urls)
-    visited: Set[str] = set()
-    articles: List[Article] = []
-
-    while queue and len(visited) < max_pages:
-        url = queue.popleft()
-        if url in visited or not _is_allowed_source(url):
-            continue
-        visited.add(url)
-
-        html = _fetch_url(url, timeout_seconds)
-        if not html:
-            continue
-
-        parsed_articles = _parse_jsonld_articles(html, url) + _parse_html_articles(html, url)
-        articles.extend([article for article in parsed_articles if _is_allowed_article_url(article.source_url)])
-
-        domain = urlparse(url).netloc
-        for link in _extract_links(html, url):
-            if link not in visited and _is_allowed_source(link) and _should_visit_link(domain, link):
-                queue.append(link)
-
-    return articles
-
-
-def load_existing_articles(s3_client: Any, bucket: str, key: str) -> List[Article]:
+def _ensure_bucket(s3_client: Any, bucket: str, region_name: str) -> None:
     try:
-        obj = s3_client.get_object(Bucket=bucket, Key=key)
+        s3_client.head_bucket(Bucket=bucket)
     except Exception as exc:
         code = getattr(exc, "response", {}).get("Error", {}).get("Code") if hasattr(exc, "response") else None
-        if code in {"NoSuchKey", "404", "NoSuchBucket"} or "NoSuchKey" in str(exc):
-            return []
-        raise
-    payload = json.loads(obj["Body"].read().decode("utf-8"))
-    return [Article(**item) for item in payload.get("articles", []) if isinstance(item, dict)]
+        if code not in {"404", "NoSuchBucket", "NotFound"}:
+            raise
+
+        params: Dict[str, Any] = {"Bucket": bucket}
+        if region_name != "us-east-1":
+            params["CreateBucketConfiguration"] = {"LocationConstraint": region_name}
+        s3_client.create_bucket(**params)
 
 
-def store_articles(s3_client: Any, bucket: str, key: str, articles: List[Article]) -> None:
-    body = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "count": len(articles),
-        "articles": [a.to_dict() for a in articles],
-    }
-    s3_client.put_object(
+def _configure_bucket_cors(s3_client: Any, bucket: str) -> None:
+    s3_client.put_bucket_cors(
         Bucket=bucket,
-        Key=key,
-        Body=json.dumps(body, indent=2).encode("utf-8"),
-        ContentType="application/json",
+        CORSConfiguration={
+            "CORSRules": [
+                {
+                    "AllowedMethods": ["GET"],
+                    "AllowedOrigins": ALLOWED_ORIGINS,
+                    "AllowedHeaders": ["*"],
+                    "MaxAgeSeconds": 3600,
+                }
+            ]
+        },
     )
 
 
 def _build_dated_key(key_prefix: str, run_at: datetime) -> str:
-    cleaned = key_prefix.strip().strip("/")
-    if not cleaned:
-        cleaned = "running/articles"
-    return f"{cleaned}-{run_at.date().isoformat()}.json"
+    cleaned = key_prefix.strip().strip("/") or "running-tips/tip"
+    return f"{cleaned}-{run_at.strftime('%Y-%m-%d')}.json"
 
 
-def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+def _store_tip(s3_client: Any, bucket: str, key: str, tip: RunningTip) -> None:
+    s3_client.put_object(
+        Bucket=bucket,
+        Key=key,
+        Body=json.dumps(tip.to_dict(), indent=2).encode("utf-8"),
+        ContentType="application/json",
+    )
+
+
+def lambda_handler(event: Optional[Dict[str, Any]], context: Any) -> Dict[str, Any]:
     import boto3
 
-    bucket = os.environ["RACES_BUCKET"]
-    key_prefix = os.getenv("RACES_KEY_PREFIX", "running/articles")
-    max_pages = int(os.getenv("MAX_PAGES", "80"))
-    seed_urls = [
-        u.strip() for u in os.getenv("SEED_URLS", ",".join(DEFAULT_SEED_URLS)).split(",") if u.strip()
-    ]
-    run_at = datetime.now(timezone.utc)
-    key = _build_dated_key(key_prefix, run_at)
+    payload = event or {}
+    region_name = os.getenv("AWS_REGION", "ap-southeast-2")
+    secret_name = os.getenv("OPENAI_SECRET_NAME", "ChatGPTKey")
+    key_prefix = os.getenv("TIPS_KEY_PREFIX", "running-tips/tip")
+    bucket = os.environ["TIPS_BUCKET"]
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    timeout_seconds = int(os.getenv("OPENAI_TIMEOUT_SECONDS", "30"))
 
-    s3_client = boto3.client("s3")
-    discovered = crawl_sources(seed_urls=seed_urls, max_pages=max_pages)
-    stored_articles = _dedupe_articles(discovered)
-    store_articles(s3_client, bucket, key, stored_articles)
+    secrets_client = boto3.client("secretsmanager", region_name=region_name)
+    s3_client = boto3.client("s3", region_name=region_name)
+
+    api_key = _load_openai_key(secrets_client, secret_name, region_name)
+    category = _choose_category(payload)
+    run_at = datetime.now(timezone.utc)
+
+    tip_text = _request_openai_tip(api_key, category, model, timeout_seconds)
+    tip = RunningTip(
+        category=category,
+        tip=tip_text,
+        model=model,
+        generated_at=run_at.isoformat(),
+    )
+
+    _ensure_bucket(s3_client, bucket, region_name)
+    _configure_bucket_cors(s3_client, bucket)
+    key = _build_dated_key(key_prefix, run_at)
+    _store_tip(s3_client, bucket, key, tip)
 
     return {
         "statusCode": 200,
         "body": json.dumps(
             {
-                "stored": len(stored_articles),
-                "discovered": len(discovered),
                 "bucket": bucket,
                 "key": key,
+                "category": category,
+                "model": model,
             }
         ),
     }

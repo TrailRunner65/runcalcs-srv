@@ -4,148 +4,146 @@ from types import SimpleNamespace
 
 import lambda_function
 from lambda_function import (
-    Article,
-    DEFAULT_SEED_URLS,
+    ALLOWED_ORIGINS,
+    TIP_CATEGORIES,
+    RunningTip,
     _build_dated_key,
-    _dedupe_articles,
-    _is_allowed_article_url,
-    _is_allowed_source,
-    _parse_html_articles,
-    _parse_jsonld_articles,
-    _should_visit_link,
+    _choose_category,
+    _configure_bucket_cors,
+    _ensure_bucket,
+    _load_openai_key,
 )
 
 
-def test_parse_jsonld_extracts_running_article():
-    html = '''
-    <html><head>
-      <script type="application/ld+json">
-      {
-        "@context": "https://schema.org",
-        "@type": "NewsArticle",
-        "headline": "How to Improve Your 10K Time",
-        "description": "Start with consistent weekly mileage and structured intervals.",
-        "url": "https://www.letsrun.com/news/2029/10/how-to-improve-10k-time"
-      }
-      </script>
-    </head></html>
-    '''
+class FakeBody:
+    def __init__(self, payload: dict):
+        self.payload = payload
 
-    articles = _parse_jsonld_articles(html, "https://www.letsrun.com/news")
-
-    assert len(articles) == 1
-    assert articles[0].title == "How to Improve Your 10K Time"
-    assert articles[0].summary.startswith("Start with consistent weekly mileage")
-    assert articles[0].source_url.endswith("how-to-improve-10k-time")
+    def read(self):
+        return json.dumps(self.payload).encode("utf-8")
 
 
-def test_dedupe_articles_by_title_and_source_url():
-    articles = [
-        Article(
-            title="Race Day Nutrition Guide",
-            summary="A",
-            source_url="https://www.runnersworld.com/running/a12345/race-day-nutrition-guide/",
-        ),
-        Article(
-            title=" Race Day   Nutrition Guide ",
-            summary="B",
-            source_url="https://www.runnersworld.com/running/a12345/race-day-nutrition-guide/",
-        ),
-    ]
+def test_load_openai_key_from_plain_secret_value():
+    class FakeSecrets:
+        def get_secret_value(self, SecretId):
+            assert SecretId == "ChatGPTKey"
+            return {"SecretString": "sk-test-key"}
 
-    filtered = _dedupe_articles(articles)
-
-    assert len(filtered) == 1
-    assert filtered[0].title == "Race Day Nutrition Guide"
+    key = _load_openai_key(FakeSecrets(), "ChatGPTKey", "ap-southeast-2")
+    assert key == "sk-test-key"
 
 
-def test_parse_html_fallback_from_title_and_meta_description():
-    html = '''
-    <html>
-      <head>
-        <title>Best Recovery Runs for Marathoners</title>
-        <meta name="description" content="Easy efforts done consistently can speed recovery." />
-      </head>
-    </html>
-    '''
+def test_load_openai_key_from_json_secret_value():
+    class FakeSecrets:
+        def get_secret_value(self, SecretId):
+            return {"SecretString": '{"OPENAI_API_KEY": "sk-json"}'}
 
-    articles = _parse_html_articles(html, "https://www.runnersworld.com/running/a1111/recovery-runs")
-
-    assert len(articles) == 1
-    assert articles[0].title == "Best Recovery Runs for Marathoners"
-    assert "speed recovery" in articles[0].summary
+    key = _load_openai_key(FakeSecrets(), "ChatGPTKey", "ap-southeast-2")
+    assert key == "sk-json"
 
 
-def test_is_allowed_source_accepts_requested_domains():
-    assert _is_allowed_source("https://www.letsrun.com/news")
-    assert _is_allowed_source("https://www.runnersworld.com/running")
-    assert _is_allowed_source("https://runnersword.com")
-    assert not _is_allowed_source("https://example.com")
+def test_choose_category_uses_event_value_when_valid():
+    assert _choose_category({"category": "nutrition"}) == "nutrition"
 
 
-def test_default_seed_urls_are_article_or_news_sections():
-    paths = [url.split("/", 3)[-1] if "/" in url[8:] else "" for url in DEFAULT_SEED_URLS]
-    assert all(path.strip("/") for path in paths)
+def test_choose_category_falls_back_to_known_list():
+    category = _choose_category({"category": "invalid"})
+    assert category in TIP_CATEGORIES
 
 
-def test_is_allowed_source_accepts_added_running_news_domains():
-    assert _is_allowed_source("https://www.irunfar.com/news/ultra-training-update")
-    assert _is_allowed_source("https://www.trailrunnermag.com/category/training/")
-    assert _is_allowed_source("https://runningmagazine.ca/the-scene/")
+def test_ensure_bucket_creates_when_missing():
+    class MissingBucketError(Exception):
+        def __init__(self):
+            self.response = {"Error": {"Code": "404"}}
+
+    class FakeS3:
+        def __init__(self):
+            self.created = None
+
+        def head_bucket(self, Bucket):
+            raise MissingBucketError()
+
+        def create_bucket(self, **kwargs):
+            self.created = kwargs
+
+    fake_s3 = FakeS3()
+    _ensure_bucket(fake_s3, "tips-bucket", "ap-southeast-2")
+
+    assert fake_s3.created == {
+        "Bucket": "tips-bucket",
+        "CreateBucketConfiguration": {"LocationConstraint": "ap-southeast-2"},
+    }
 
 
-def test_runnersworld_links_are_limited_to_news_path():
-    assert _should_visit_link("www.runnersworld.com", "https://www.runnersworld.com/news/a12345/story/")
-    assert not _should_visit_link("www.runnersworld.com", "https://www.runnersworld.com/running/a12345/story/")
+def test_configure_bucket_cors_sets_expected_origins():
+    class FakeS3:
+        def __init__(self):
+            self.cors = None
+
+        def put_bucket_cors(self, **kwargs):
+            self.cors = kwargs
+
+    fake_s3 = FakeS3()
+    _configure_bucket_cors(fake_s3, "tips-bucket")
+
+    rule = fake_s3.cors["CORSConfiguration"]["CORSRules"][0]
+    assert rule["AllowedOrigins"] == ALLOWED_ORIGINS
 
 
-def test_default_seed_urls_include_only_runnersworld_news():
-    runnersworld_seeds = [u for u in DEFAULT_SEED_URLS if "runnersworld.com" in u]
-    assert runnersworld_seeds == ["https://www.runnersworld.com/news/"]
+def test_build_dated_key_has_date_suffix():
+    key = _build_dated_key("running-tips/tip", datetime(2026, 2, 27, tzinfo=timezone.utc))
+    assert key == "running-tips/tip-2026-02-27.json"
 
 
-def test_runnersworld_article_urls_are_limited_to_news():
-    assert _is_allowed_article_url("https://www.runnersworld.com/news/a12345/story/")
-    assert not _is_allowed_article_url("https://www.runnersworld.com/training/a12345/story/")
-    assert not _is_allowed_article_url("https://www.runnersworld.com/auth/login")
+def test_lambda_handler_generates_and_stores_tip(monkeypatch):
+    class FakeSecrets:
+        def get_secret_value(self, SecretId):
+            return {"SecretString": "sk-test-key"}
 
-
-def test_non_runnersworld_article_urls_still_allowed_from_other_feeds():
-    assert _is_allowed_article_url("https://www.letsrun.com/news/2025/10/example/")
-    assert _is_allowed_article_url("https://www.irunfar.com/news/ultra-update")
-
-
-def test_build_dated_key_uses_date_suffix():
-    key = _build_dated_key("running/articles", datetime(2026, 2, 27, tzinfo=timezone.utc))
-    assert key == "running/articles-2026-02-27.json"
-
-
-def test_lambda_handler_stores_new_dated_file_without_existing_merge(monkeypatch):
     class FakeS3:
         def __init__(self):
             self.put_calls = []
+            self.cors_calls = []
+
+        def head_bucket(self, Bucket):
+            return {}
+
+        def put_bucket_cors(self, **kwargs):
+            self.cors_calls.append(kwargs)
 
         def put_object(self, **kwargs):
             self.put_calls.append(kwargs)
 
     fake_s3 = FakeS3()
 
-    monkeypatch.setenv("RACES_BUCKET", "bucket-1")
-    monkeypatch.setenv("RACES_KEY_PREFIX", "running/articles")
-    monkeypatch.setenv("SEED_URLS", "https://www.letsrun.com/news/")
-    monkeypatch.setattr(lambda_function, "crawl_sources", lambda **kwargs: [
-        Article(title="A", summary="S", source_url="https://www.letsrun.com/news/a"),
-        Article(title="A", summary="S2", source_url="https://www.letsrun.com/news/a"),
-    ])
+    monkeypatch.setenv("TIPS_BUCKET", "tips-bucket")
+    monkeypatch.setenv("TIPS_KEY_PREFIX", "running-tips/tip")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-mini")
     monkeypatch.setattr(lambda_function, "datetime", SimpleNamespace(now=lambda tz: datetime(2026, 2, 27, tzinfo=timezone.utc)))
+    monkeypatch.setattr(lambda_function, "_request_openai_tip", lambda *args, **kwargs: "Hydrate after your easy run.")
 
     import sys
-    sys.modules["boto3"] = SimpleNamespace(client=lambda _: fake_s3)
 
-    result = lambda_function.lambda_handler({}, None)
+    def fake_client(service, region_name=None):
+        if service == "secretsmanager":
+            return FakeSecrets()
+        if service == "s3":
+            return fake_s3
+        raise AssertionError(service)
+
+    sys.modules["boto3"] = SimpleNamespace(client=fake_client)
+
+    result = lambda_function.lambda_handler({"category": "rest"}, None)
     body = json.loads(result["body"])
 
-    assert body["key"] == "running/articles-2026-02-27.json"
-    assert body["stored"] == 1
-    assert "existing" not in body
-    assert fake_s3.put_calls[0]["Key"] == "running/articles-2026-02-27.json"
+    assert body["bucket"] == "tips-bucket"
+    assert body["key"] == "running-tips/tip-2026-02-27.json"
+    assert body["category"] == "rest"
+
+    stored_payload = json.loads(fake_s3.put_calls[0]["Body"].decode("utf-8"))
+    assert stored_payload == RunningTip(
+        category="rest",
+        tip="Hydrate after your easy run.",
+        model="gpt-4o-mini",
+        generated_at="2026-02-27T00:00:00+00:00",
+    ).to_dict()
