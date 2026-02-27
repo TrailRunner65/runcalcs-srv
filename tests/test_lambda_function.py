@@ -15,21 +15,13 @@ from lambda_function import (
 )
 
 
-class FakeBody:
-    def __init__(self, payload: dict):
-        self.payload = payload
-
-    def read(self):
-        return json.dumps(self.payload).encode("utf-8")
-
-
 def test_load_openai_key_from_plain_secret_value():
     class FakeSecrets:
         def get_secret_value(self, SecretId):
             assert SecretId == "ChatGPTKey"
             return {"SecretString": "sk-test-key"}
 
-    key = _load_openai_key(FakeSecrets(), "ChatGPTKey", "ap-southeast-2")
+    key = _load_openai_key(FakeSecrets(), "ChatGPTKey")
     assert key == "sk-test-key"
 
 
@@ -38,8 +30,26 @@ def test_load_openai_key_from_json_secret_value():
         def get_secret_value(self, SecretId):
             return {"SecretString": '{"OPENAI_API_KEY": "sk-json"}'}
 
-    key = _load_openai_key(FakeSecrets(), "ChatGPTKey", "ap-southeast-2")
+    key = _load_openai_key(FakeSecrets(), "ChatGPTKey")
     assert key == "sk-json"
+
+
+def test_load_openai_key_from_chatgptkey_json_field():
+    class FakeSecrets:
+        def get_secret_value(self, SecretId):
+            return {"SecretString": '{"ChatGPTKey": "sk-from-chatgptkey-field"}'}
+
+    key = _load_openai_key(FakeSecrets(), "ChatGPTKey")
+    assert key == "sk-from-chatgptkey-field"
+
+
+def test_load_openai_key_from_nested_json_value():
+    class FakeSecrets:
+        def get_secret_value(self, SecretId):
+            return {"SecretString": '{"credentials": {"token": "sk-nested-value"}}'}
+
+    key = _load_openai_key(FakeSecrets(), "ChatGPTKey")
+    assert key == "sk-nested-value"
 
 
 def test_choose_category_uses_event_value_when_valid():

@@ -4,7 +4,7 @@ import os
 import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -49,7 +49,18 @@ class RunningTip:
         }
 
 
-def _load_openai_key(secrets_client: Any, secret_name: str, region_name: str) -> str:
+def _iter_strings(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for nested in value.values():
+            yield from _iter_strings(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            yield from _iter_strings(nested)
+
+
+def _load_openai_key(secrets_client: Any, secret_name: str) -> str:
     response = secrets_client.get_secret_value(SecretId=secret_name)
     secret_string = response.get("SecretString", "")
     if not secret_string:
@@ -60,12 +71,28 @@ def _load_openai_key(secrets_client: Any, secret_name: str, region_name: str) ->
     except json.JSONDecodeError:
         return secret_string.strip()
 
-    for key_name in ("OPENAI_API_KEY", "openai_api_key", "api_key", "key"):
+    for key_name in (
+        "OPENAI_API_KEY",
+        "openai_api_key",
+        "api_key",
+        "key",
+        "ChatGPTKey",
+        "chatgptkey",
+        "chatgpt_key",
+    ):
         value = parsed.get(key_name)
         if isinstance(value, str) and value.strip():
             return value.strip()
 
-    raise ValueError(f"Secret '{secret_name}' JSON does not contain an OpenAI API key")
+    for candidate in _iter_strings(parsed):
+        cleaned = candidate.strip()
+        if cleaned.startswith("sk-"):
+            return cleaned
+
+    raise ValueError(
+        f"Secret '{secret_name}' JSON does not contain an OpenAI API key. "
+        "Expected a plain key value or one of: OPENAI_API_KEY, openai_api_key, api_key, key, ChatGPTKey"
+    )
 
 
 def _choose_category(event: Dict[str, Any]) -> str:
@@ -179,7 +206,7 @@ def lambda_handler(event: Optional[Dict[str, Any]], context: Any) -> Dict[str, A
     secrets_client = boto3.client("secretsmanager", region_name=region_name)
     s3_client = boto3.client("s3", region_name=region_name)
 
-    api_key = _load_openai_key(secrets_client, secret_name, region_name)
+    api_key = _load_openai_key(secrets_client, secret_name)
     category = _choose_category(payload)
     run_at = datetime.now(timezone.utc)
 
