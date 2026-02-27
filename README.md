@@ -1,6 +1,6 @@
 # runcalcs-srv
 
-AWS SAM project that deploys a daily Lambda to discover running news/articles, deduplicate them, and persist the merged dataset to S3.
+AWS SAM project that deploys a daily Lambda to request a running tip of the day from OpenAI and store the result in S3.
 
 ## Requirements
 - Python `3.13.3`
@@ -9,39 +9,46 @@ AWS SAM project that deploys a daily Lambda to discover running news/articles, d
 
 ## What it does
 - Runs once per day at midnight UTC via EventBridge schedule (`cron(0 0 * * ? *)`).
-- Crawls running **article/news section pages** (not main site homepages).
-- Extracts article metadata from `application/ld+json` Article markup.
-- Falls back to the page `<title>` and meta description when JSON-LD is unavailable.
-- Captures:
-  - `title`
-  - `summary` (short snippet from the start of article text/description)
-  - `source_url` (link to original article)
-- Deduplicates articles discovered in the current run by normalized `title + source_url`.
-- Writes a **new dated JSON file** to S3 for each run (no append/merge with previous files).
-
-## Default article/news sources
-- `https://www.letsrun.com/news/`
-- `https://www.runnersworld.com/news/` (Runner's World is restricted to `/news`)
-- Runner's World articles are additionally filtered so stored `source_url` values must stay under `/news` (excluding `/training` and `/auth`).
-- `https://www.irunfar.com/news`
-- `https://www.trailrunnermag.com/category/training/`
-- `https://runningmagazine.ca/the-scene/`
-
-> Tip: keep `SEED_URLS` focused on section/category/article listing pages rather than domain root homepages.
+- Fetches OpenAI API key from AWS Secrets Manager:
+  - Secret name: `ChatGPTKey`
+  - Region: `ap-southeast-2`
+- Chooses a running tip category from:
+  - running equipment
+  - health
+  - training
+  - rest
+  - recovery from injury
+  - nutrition
+  - mental wellbeing
+  - weight loss
+  - racing
+  - club running
+  - Parkruns
+- Calls OpenAI Chat Completions to generate one concise tip.
+- Ensures the target S3 bucket exists (creates it when missing).
+- Configures bucket CORS access for:
+  - `https://runcalcs.com`
+  - `https://www.runcalcs.com`
+  - `https://develop.d39l2wzc9rmkuy.amplifyapp.com`
+- Applies bucket policy/public access settings so tip JSON files can be fetched directly by the frontend from S3.
+- Stores each run to a new dated JSON object in S3 (`<prefix>-YYYY-MM-DD.json`).
+- Returns an `object_url` in the Lambda response using the **regional S3 endpoint** (for example `https://running-tip-of-day.s3.ap-southeast-2.amazonaws.com/...`) to avoid global-endpoint redirect CORS issues.
+- Do not use `https://running-tip-of-day.s3.amazonaws.com/...` from browser code; use the returned regional `object_url` instead.
 
 ## Files
 - `lambda_function.py` - Lambda implementation.
-- `template.yaml` - SAM template (Lambda, S3 bucket, EventBridge schedule).
+- `template.yaml` - SAM template (Lambda, S3 bucket, EventBridge schedule, IAM permissions).
 - `requirements.txt` - Python dependencies.
-- `tests/test_lambda_function.py` - Unit tests for parsing and dedupe behavior.
+- `tests/test_lambda_function.py` - Unit tests.
 
 ## Deploy
 ```bash
-sam build && sam deploy --stack-name running-article-crawler --capabilities CAPABILITY_IAM --resolve-s3
+sam build && sam deploy --stack-name running-tip-of-day --capabilities CAPABILITY_IAM --resolve-s3
 ```
 
 ## Lambda environment variables
-- `RACES_BUCKET` (required)
-- `RACES_KEY_PREFIX` (default: `running/articles`; output key format: `<prefix>-YYYY-MM-DD.json`)
-- `MAX_PAGES` (default: `80`)
-- `SEED_URLS` (comma-separated list; defaults are in code)
+- `TIPS_BUCKET` (required)
+- `TIPS_KEY_PREFIX` (default: `running-tips/tip`; output key format: `<prefix>-YYYY-MM-DD.json`)
+- `OPENAI_SECRET_NAME` (default: `ChatGPTKey`)
+- `OPENAI_MODEL` (default: `gpt-4o-mini`)
+- `OPENAI_TIMEOUT_SECONDS` (default: `30`)
