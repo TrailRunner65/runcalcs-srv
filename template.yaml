@@ -7,6 +7,24 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: running-tip-of-day
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        IgnorePublicAcls: false
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+
+  RunningTipsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref RunningTipsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PublicReadTips
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${RunningTipsBucket}/*"
 
   RunningTipOfDayFunction:
     Type: AWS::Serverless::Function

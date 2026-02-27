@@ -30,6 +30,7 @@ AWS SAM project that deploys a daily Lambda to request a running tip of the day 
   - `https://runcalcs.com`
   - `https://www.runcalcs.com`
   - `https://develop.d39l2wzc9rmkuy.amplifyapp.com/`
+- Applies bucket policy/public access settings so tip JSON files can be fetched directly by the frontend from S3.
 - Stores each run to a new dated JSON object in S3 (`<prefix>-YYYY-MM-DD.json`).
 
 ## Files
