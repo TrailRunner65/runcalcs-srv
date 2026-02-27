@@ -23,6 +23,11 @@ Resources:
               Action:
                 - secretsmanager:GetSecretValue
               Resource: "*"
+            - Effect: Allow
+              Action:
+                - s3:PutBucketCORS
+                - s3:CreateBucket
+              Resource: !Sub "arn:aws:s3:::${RunningTipsBucket}"
       Environment:
         Variables:
           TIPS_BUCKET: !Ref RunningTipsBucket
