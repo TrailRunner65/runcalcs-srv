@@ -1,6 +1,12 @@
+import json
+from datetime import datetime, timezone
+from types import SimpleNamespace
+
+import lambda_function
 from lambda_function import (
     Article,
     DEFAULT_SEED_URLS,
+    _build_dated_key,
     _dedupe_articles,
     _is_allowed_article_url,
     _is_allowed_source,
@@ -107,3 +113,39 @@ def test_runnersworld_article_urls_are_limited_to_news():
 def test_non_runnersworld_article_urls_still_allowed_from_other_feeds():
     assert _is_allowed_article_url("https://www.letsrun.com/news/2025/10/example/")
     assert _is_allowed_article_url("https://www.irunfar.com/news/ultra-update")
+
+
+def test_build_dated_key_uses_date_suffix():
+    key = _build_dated_key("running/articles", datetime(2026, 2, 27, tzinfo=timezone.utc))
+    assert key == "running/articles-2026-02-27.json"
+
+
+def test_lambda_handler_stores_new_dated_file_without_existing_merge(monkeypatch):
+    class FakeS3:
+        def __init__(self):
+            self.put_calls = []
+
+        def put_object(self, **kwargs):
+            self.put_calls.append(kwargs)
+
+    fake_s3 = FakeS3()
+
+    monkeypatch.setenv("RACES_BUCKET", "bucket-1")
+    monkeypatch.setenv("RACES_KEY_PREFIX", "running/articles")
+    monkeypatch.setenv("SEED_URLS", "https://www.letsrun.com/news/")
+    monkeypatch.setattr(lambda_function, "crawl_sources", lambda **kwargs: [
+        Article(title="A", summary="S", source_url="https://www.letsrun.com/news/a"),
+        Article(title="A", summary="S2", source_url="https://www.letsrun.com/news/a"),
+    ])
+    monkeypatch.setattr(lambda_function, "datetime", SimpleNamespace(now=lambda tz: datetime(2026, 2, 27, tzinfo=timezone.utc)))
+
+    import sys
+    sys.modules["boto3"] = SimpleNamespace(client=lambda _: fake_s3)
+
+    result = lambda_function.lambda_handler({}, None)
+    body = json.loads(result["body"])
+
+    assert body["key"] == "running/articles-2026-02-27.json"
+    assert body["stored"] == 1
+    assert "existing" not in body
+    assert fake_s3.put_calls[0]["Key"] == "running/articles-2026-02-27.json"

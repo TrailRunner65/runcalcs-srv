@@ -16,9 +16,8 @@ AWS SAM project that deploys a daily Lambda to discover running news/articles, d
   - `title`
   - `summary` (short snippet from the start of article text/description)
   - `source_url` (link to original article)
-- Merges with previously stored data in S3.
-- Deduplicates articles by normalized `title + source_url`.
-- Writes refreshed JSON file back to S3.
+- Deduplicates articles discovered in the current run by normalized `title + source_url`.
+- Writes a **new dated JSON file** to S3 for each run (no append/merge with previous files).
 
 ## Default article/news sources
 - `https://www.letsrun.com/news/`
@@ -43,6 +42,6 @@ sam build && sam deploy --stack-name running-article-crawler --capabilities CAPA
 
 ## Lambda environment variables
 - `RACES_BUCKET` (required)
-- `RACES_KEY` (default: `running/articles.json`)
+- `RACES_KEY_PREFIX` (default: `running/articles`; output key format: `<prefix>-YYYY-MM-DD.json`)
 - `MAX_PAGES` (default: `80`)
 - `SEED_URLS` (comma-separated list; defaults are in code)

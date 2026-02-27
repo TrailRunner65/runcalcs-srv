@@ -21,7 +21,7 @@ Resources:
       Environment:
         Variables:
           RACES_BUCKET: !Ref MarathonRacesBucket
-          RACES_KEY: running/articles.json
+          RACES_KEY_PREFIX: running/articles
           MAX_PAGES: 80
       Events:
         DailyMidnightSchedule:

@@ -261,29 +261,36 @@ def store_articles(s3_client: Any, bucket: str, key: str, articles: List[Article
     )
 
 
+def _build_dated_key(key_prefix: str, run_at: datetime) -> str:
+    cleaned = key_prefix.strip().strip("/")
+    if not cleaned:
+        cleaned = "running/articles"
+    return f"{cleaned}-{run_at.date().isoformat()}.json"
+
+
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     import boto3
 
     bucket = os.environ["RACES_BUCKET"]
-    key = os.getenv("RACES_KEY", "running/articles.json")
+    key_prefix = os.getenv("RACES_KEY_PREFIX", "running/articles")
     max_pages = int(os.getenv("MAX_PAGES", "80"))
     seed_urls = [
         u.strip() for u in os.getenv("SEED_URLS", ",".join(DEFAULT_SEED_URLS)).split(",") if u.strip()
     ]
+    run_at = datetime.now(timezone.utc)
+    key = _build_dated_key(key_prefix, run_at)
 
     s3_client = boto3.client("s3")
-    existing = load_existing_articles(s3_client, bucket, key)
     discovered = crawl_sources(seed_urls=seed_urls, max_pages=max_pages)
-    merged = _dedupe_articles(existing + discovered)
-    store_articles(s3_client, bucket, key, merged)
+    stored_articles = _dedupe_articles(discovered)
+    store_articles(s3_client, bucket, key, stored_articles)
 
     return {
         "statusCode": 200,
         "body": json.dumps(
             {
-                "stored": len(merged),
+                "stored": len(stored_articles),
                 "discovered": len(discovered),
-                "existing": len(existing),
                 "bucket": bucket,
                 "key": key,
             }
