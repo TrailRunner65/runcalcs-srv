@@ -7,6 +7,18 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: running-tip-of-day
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods:
+              - GET
+              - HEAD
+            AllowedOrigins:
+              - https://runcalcs.com
+              - https://www.runcalcs.com
+              - https://develop.d39l2wzc9rmkuy.amplifyapp.com
+            AllowedHeaders:
+              - "*"
+            MaxAge: 3600
       PublicAccessBlockConfiguration:
         BlockPublicAcls: false
         IgnorePublicAcls: false
